@@ -1,0 +1,82 @@
+.chart-wrapper {
+  color: #fff;
+  background-color: #192027;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  padding: 20px;
+  font-family: Fira Sans, sans-serif;
+}
+
+.chart-container {
+  width: 100%;
+  height: 400px;
+  position: relative;
+}
+
+#priceStats {
+  justify-content: space-between;
+  gap: 15px;
+  margin-top: 20px;
+  display: flex;
+}
+
+.stat-box {
+  text-align: center;
+  background-color: #1e2731;
+  border-left: 3px solid #506678;
+  border-radius: 8px;
+  flex: 1;
+  padding: 15px;
+  transition: transform .2s;
+}
+
+.highest-price, .lowest-price, .average-price {
+  border-left-color: #506678;
+}
+
+.stat-label {
+  color: #a0a0a0;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+
+.stat-value {
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.stat-indicator {
+  color: #a0a0a0;
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+@media (width <= 768px) {
+  #priceStats {
+    flex-direction: column;
+  }
+
+  .stat-box {
+    margin-bottom: 10px;
+  }
+
+  .chart-container {
+    height: 300px;
+  }
+}
+
+@media (width <= 480px) {
+  .chart-container {
+    height: 250px;
+  }
+
+  .stat-value {
+    font-size: 18px;
+  }
+
+  .stat-label {
+    font-size: 12px;
+  }
+}
+/*# sourceMappingURL=app.css.map */
