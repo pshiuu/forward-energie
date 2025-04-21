@@ -837,7 +837,22 @@ function initChart() {
       const { ctx, data, chartArea, scales } = chart;
       const dataset = data.datasets[0];
 
-      if (!dataset.data || dataset.data.length === 0) return;
+      // Need at least 2 points to calculate spacing
+      if (!dataset.data || dataset.data.length < 2) return;
+
+      // Calculate approximate space per bar based on the first two points
+      const barSpacing =
+        scales.x.getPixelForValue(1) - scales.x.getPixelForValue(0);
+
+      // Minimum spacing required to draw labels comfortably (adjust px value as needed)
+      const minSpacingForLabels = 25;
+
+      // If bars are too close together, skip drawing labels to improve performance
+      if (barSpacing < minSpacingForLabels) {
+        // Optional: Log when skipping
+        // console.log(`Skipping price labels, bar spacing (${barSpacing.toFixed(1)}px) too small.`);
+        return;
+      }
 
       // Configure label style - Adjust font size slightly for better fit
       const isMobile = window.innerWidth < 768; // Keep for font size check
@@ -847,7 +862,7 @@ function initChart() {
       ctx.textAlign = "center";
       ctx.fillStyle = "#555";
 
-      // Draw each price label - No more skipping based on width
+      // Draw each price label
       dataset.data.forEach((value: number, index: number) => {
         const xPos = scales.x.getPixelForValue(index);
         const yPos = scales.y.getPixelForValue(value) - 5; // Position above bar
@@ -952,13 +967,11 @@ function initChart() {
             color: colors.text,
             font: tickFont,
             padding: 5,
-            // Responsive tick labels - REMOVE skipping logic
             callback: function (value, index) {
               // Always return the label now
               return this.getLabelForValue(index);
             },
             maxRotation: 0, // Prevent label rotation
-            autoSkip: false, // Ensure all ticks are considered
           },
         },
       },
