@@ -214,7 +214,7 @@ function navigateDays(days: number) {
   }
 }
 
-// Update next button state (disabled if date is tomorrow or loading)
+// Update next button state (hidden if date is today, disabled if loading)
 function updateNextButtonState() {
   const nextButton = document.querySelector(
     ".date-nav-next"
@@ -223,15 +223,22 @@ function updateNextButtonState() {
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(today.getDate() + 1);
   const selectedDay = new Date(currentSelectedDate);
   selectedDay.setHours(0, 0, 0, 0);
 
-  // Disable if the selected date is tomorrow or later, or if it's currently loading
+  // Hide the next button completely if the selected date is today
+  // Otherwise, just disable it if we're loading
   const isLoading = document.body.classList.contains("chart-loading");
-  nextButton.disabled = selectedDay >= tomorrow || isLoading;
-  nextButton.classList.toggle("disabled", selectedDay >= tomorrow || isLoading);
+
+  if (selectedDay.getTime() === today.getTime()) {
+    // Today's date - hide button completely
+    nextButton.style.display = "none";
+  } else {
+    // Past date - show button but possibly disable if loading
+    nextButton.style.display = "inline-flex";
+    nextButton.disabled = isLoading;
+    nextButton.classList.toggle("disabled", isLoading);
+  }
 
   // Also update prev button state based on loading
   const prevButton = document.querySelector(
