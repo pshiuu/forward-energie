@@ -1775,15 +1775,28 @@ var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "helloWorldRoutes", ()=>helloWorldRoutes);
 var _core = require("@xatom/core");
-var _energyPriceChart = require("../modules/energyPriceChart");
+var _home = require("../modules/pages/home");
 const helloWorldRoutes = ()=>{
     new (0, _core.WFRoute)("/").execute(()=>{
-        // Initialize energy price chart for the home page
-        (0, _energyPriceChart.initEnergyPriceChart)();
+        (0, _home.initHome)();
     });
 };
 
-},{"@xatom/core":"8w4K8","../modules/energyPriceChart":"eOPfW","@parcel/transformer-js/src/esmodule-helpers.js":"5oERU"}],"eOPfW":[function(require,module,exports,__globalThis) {
+},{"@xatom/core":"8w4K8","../modules/pages/home":"6qTQY","@parcel/transformer-js/src/esmodule-helpers.js":"5oERU"}],"6qTQY":[function(require,module,exports,__globalThis) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "initHome", ()=>initHome);
+var _energyPriceChart = require("../energyPriceChart");
+var _swiperHome = require("../swiper-home");
+var _faq = require("../faq");
+const initHome = ()=>{
+    console.log("\uD83C\uDFE0 Home Page - Initializing components");
+    (0, _energyPriceChart.initEnergyPriceChart)();
+    (0, _swiperHome.initSwiperHome)();
+    (0, _faq.initFAQ)();
+};
+
+},{"../energyPriceChart":"eOPfW","../swiper-home":"9pJxG","../faq":"3W7Bz","@parcel/transformer-js/src/esmodule-helpers.js":"5oERU"}],"eOPfW":[function(require,module,exports,__globalThis) {
 var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
 parcelHelpers.defineInteropFlag(exports);
 parcelHelpers.export(exports, "initEnergyPriceChart", ()=>initEnergyPriceChart);
@@ -16100,6 +16113,102 @@ class Color {
 function index_esm(input) {
     return new Color(input);
 }
+
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"5oERU"}],"9pJxG":[function(require,module,exports,__globalThis) {
+var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "initSwiperHome", ()=>initSwiperHome);
+const initSwiperHome = ()=>{
+    console.log("\uD83C\uDFE0 Swiper Home Page - Initializing components");
+    var swiperrev = new Swiper(".swiper.is-rev", {
+        slidesPerView: 1,
+        autoHeight: true,
+        spaceBetween: 20,
+        navigation: {
+            nextEl: ".swiper-btn.is-next",
+            prevEl: ".swiper-btn.is-prev"
+        },
+        breakpoints: {
+            768: {
+                slidesPerView: 2,
+                spaceBetween: 20
+            },
+            1024: {
+                slidesPerView: 2,
+                spaceBetween: 20
+            }
+        }
+    });
+};
+
+},{"@parcel/transformer-js/src/esmodule-helpers.js":"5oERU"}],"3W7Bz":[function(require,module,exports,__globalThis) {
+/**
+ * FAQ Module
+ * Controls the accordion behavior of FAQ items
+ */ var parcelHelpers = require("@parcel/transformer-js/src/esmodule-helpers.js");
+parcelHelpers.defineInteropFlag(exports);
+parcelHelpers.export(exports, "initFAQ", ()=>initFAQ);
+function initFAQ() {
+    // Wait for DOM to be fully loaded
+    document.addEventListener("DOMContentLoaded", ()=>{
+        const faqItems = document.querySelectorAll(".qa-wrap");
+        // Set initial state - all closed
+        faqItems.forEach((item)=>{
+            const answer = item.querySelector(".qa-answer");
+            // Set initial grid-row-gap
+            item.style.gridRowGap = "0rem";
+            item.style.transition = "grid-row-gap 0.2s cubic-bezier(0.1, 0.1, 0.1, 1)";
+            if (answer) {
+                // Apply these styles directly
+                answer.style.maxHeight = "0";
+                answer.style.overflow = "hidden";
+                answer.style.transition = "max-height 0.2s cubic-bezier(0.1, 0.1, 0.1, 0.1)";
+            }
+        });
+        // Add click event listener to each FAQ item
+        faqItems.forEach((item)=>{
+            const answer = item.querySelector(".qa-answer");
+            const svgContainer = item.querySelector(".plus-svg");
+            if (answer && svgContainer) {
+                // Get the vertical line of the plus sign (first path in the SVG)
+                const verticalLine = svgContainer.querySelector("path:first-child");
+                // Make sure transitions are smooth
+                if (verticalLine) verticalLine.style.transition = "opacity 0.3s cubic-bezier(0.1, 0.1, 0.1, 0.1)";
+                // Add click event to the entire qa-wrap element
+                item.addEventListener("click", (e)=>{
+                    e.preventDefault();
+                    // Toggle active class
+                    const isActive = item.classList.contains("active");
+                    // Toggle SVG animation - transform plus to minus
+                    if (isActive) {
+                        // Return to plus by showing vertical line
+                        if (verticalLine) verticalLine.setAttribute("opacity", "1");
+                        // Set grid-row-gap to 0rem when closed
+                        item.style.gridRowGap = "0rem";
+                    } else {
+                        // Transform to minus by hiding vertical line
+                        if (verticalLine) verticalLine.setAttribute("opacity", "0");
+                        // Set grid-row-gap to 1rem when open
+                        item.style.gridRowGap = "1rem";
+                    }
+                    // Toggle answer visibility with slide animation
+                    if (isActive) {
+                        // Close the answer
+                        answer.style.maxHeight = "0";
+                        item.classList.remove("active");
+                    } else {
+                        // Open the answer
+                        item.classList.add("active");
+                        // Set a specific large value for max-height to ensure the content is fully visible
+                        answer.style.maxHeight = "1000px";
+                    }
+                });
+            }
+        });
+    });
+}
+// Initialize the module
+initFAQ();
 
 },{"@parcel/transformer-js/src/esmodule-helpers.js":"5oERU"}]},["jeTtx"], "jeTtx", "parcelRequirebdc0", {})
 
