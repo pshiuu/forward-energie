@@ -1,7 +1,6 @@
 import { onReady } from "@xatom/core";
-import { helloWorldRoutes } from "./routes";
+import { initRoutes } from "./routes";
 
 onReady(() => {
-  // Initialize routes which includes energy price chart initialization
-  helloWorldRoutes();
+  initRoutes();
 });

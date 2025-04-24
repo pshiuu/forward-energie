@@ -35,7 +35,6 @@ export function initEnergyPriceChart() {
     if (window.Wized) {
       setupWizedIntegration();
     } else {
-      console.log("Wized not found. Initializing chart without real data.");
       initChart();
       updateDateDisplay(currentSelectedDate);
       handleNoDataForDate(); // Show no data message
@@ -45,7 +44,6 @@ export function initEnergyPriceChart() {
 
 // Setup Wized Integration
 function setupWizedIntegration() {
-  console.log("Setting up Wized integration");
   window.Wized = window.Wized || [];
   window.Wized.push((Wized: any) => {
     // Initialize chart structure and basic UI first
@@ -139,9 +137,31 @@ function setupDateNavigation() {
   prevButton.className = "date-nav-button date-nav-prev";
   prevButton.setAttribute("aria-label", "Vorheriger Tag");
 
+  // Create date display that will act as a button to open the date picker
   const dateDisplay = document.createElement("div");
   dateDisplay.id = "dateDisplay";
-  dateDisplay.className = "date-display";
+  dateDisplay.className = "date-display date-picker-trigger";
+  dateDisplay.setAttribute("role", "button");
+  dateDisplay.setAttribute("tabindex", "0");
+  dateDisplay.setAttribute("aria-label", "Datum auswählen");
+
+  // Create hidden date input that will serve as our calendar
+  const datePickerInput = document.createElement("input");
+  datePickerInput.type = "date";
+  datePickerInput.id = "datePickerInput";
+  datePickerInput.className = "date-picker-input";
+  // Set max date to today to prevent selecting future dates
+  const today = new Date();
+  datePickerInput.max = today.toISOString().split("T")[0]; // Format: YYYY-MM-DD
+
+  // Position it absolutely but make it accessible for click/focus events
+  datePickerInput.style.position = "absolute";
+  datePickerInput.style.opacity = "0";
+  datePickerInput.style.height = "0";
+  datePickerInput.style.width = "0";
+  datePickerInput.style.zIndex = "-1";
+  // Prevent iOS zoom on focus
+  datePickerInput.style.fontSize = "16px";
 
   const nextButton = document.createElement("button");
   nextButton.innerHTML = "›";
@@ -150,6 +170,7 @@ function setupDateNavigation() {
 
   dateNavContainer.appendChild(prevButton);
   dateNavContainer.appendChild(dateDisplay);
+  dateNavContainer.appendChild(datePickerInput); // Add the hidden input to the DOM
   dateNavContainer.appendChild(nextButton);
 
   // Insert date navigation - ideally next to the title if structure allows
@@ -169,7 +190,85 @@ function setupDateNavigation() {
   prevButton.addEventListener("click", () => navigateDays(-1));
   nextButton.addEventListener("click", () => navigateDays(1));
 
+  // Make the date display clickable to open the date picker
+  dateDisplay.addEventListener("click", openDatePicker);
+  dateDisplay.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      openDatePicker();
+    }
+  });
+
+  // Handle date selection from the picker
+  datePickerInput.addEventListener("change", handleDatePickerChange);
+
   updateDateDisplay(currentSelectedDate);
+  updateNextButtonState();
+}
+
+// Open the date picker when clicking on date display
+function openDatePicker() {
+  const datePickerInput = document.getElementById(
+    "datePickerInput"
+  ) as HTMLInputElement;
+  if (datePickerInput) {
+    // Set the current value to match the currently selected date
+    const formattedDate = currentSelectedDate.toISOString().split("T")[0]; // Format as YYYY-MM-DD
+    datePickerInput.value = formattedDate;
+
+    // For Safari and iOS, we need to make the input briefly visible for the picker to work
+    datePickerInput.style.opacity = "1";
+    datePickerInput.style.height = "100%";
+    datePickerInput.style.width = "100%";
+    datePickerInput.style.position = "fixed";
+    datePickerInput.style.top = "0";
+    datePickerInput.style.left = "0";
+    datePickerInput.style.zIndex = "9999";
+
+    // Focus and click to open the picker
+    datePickerInput.focus();
+    datePickerInput.click();
+
+    // Hide it again after a short delay
+    setTimeout(() => {
+      datePickerInput.style.opacity = "0";
+      datePickerInput.style.height = "0";
+      datePickerInput.style.width = "0";
+      datePickerInput.style.position = "absolute";
+      datePickerInput.style.zIndex = "-1";
+    }, 100);
+  }
+}
+
+// Handle date selection from the date picker
+function handleDatePickerChange(event: Event) {
+  const datePickerInput = event.target as HTMLInputElement;
+  if (!datePickerInput.value) return;
+
+  const selectedDate = new Date(datePickerInput.value);
+  // Ensure date is valid and not in the future
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (selectedDate.getTime() > today.getTime()) {
+    console.log("Cannot select future date");
+    return;
+  }
+
+  // Update selected date and refresh the chart
+  currentSelectedDate = selectedDate;
+  showLoadingState();
+
+  if (window.Wized) {
+    window.Wized.push((Wized: any) => {
+      handleDateChange(currentSelectedDate, Wized);
+    });
+  } else {
+    updateDateDisplay(currentSelectedDate);
+    console.log("Wized not found, cannot trigger data refresh.");
+    handleNoDataForDate();
+  }
+
   updateNextButtonState();
 }
 
@@ -716,6 +815,38 @@ function injectStyles() {
         font-weight: 500;
         height: 28px;
         line-height: 16px;
+    }
+    .date-picker-trigger {
+        cursor: pointer;
+        transition: background-color 0.2s, border-color 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .date-picker-trigger:hover {
+        background-color: #f8f8f8;
+        border-color: #bbb;
+    }
+    .date-picker-trigger:focus {
+        outline: none;
+        border-color: #4A90E2;
+        box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
+    }
+    .date-picker-trigger::after {
+        content: '';
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        margin-left: 6px;
+        background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%23555" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>');
+        background-size: contain;
+        background-repeat: no-repeat;
+        background-position: center;
+    }
+    .date-picker-input {
+        opacity: 0;
+        position: absolute;
+        pointer-events: none;
     }
     .chart-scroll-wrapper { /* New wrapper for scrolling */
       overflow-x: auto;
