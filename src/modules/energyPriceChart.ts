@@ -224,7 +224,20 @@ function openDatePicker() {
   ) as HTMLInputElement;
   if (datePickerInput) {
     // Set the current value to match the currently selected date
-    const formattedDate = currentSelectedDate.toISOString().split("T")[0]; // Format as YYYY-MM-DD
+    // Format currentSelectedDate (which is German time) to YYYY-MM-DD
+    const year = currentSelectedDate.toLocaleDateString("en-CA", {
+      year: "numeric",
+      timeZone: "Europe/Berlin",
+    });
+    const month = currentSelectedDate.toLocaleDateString("en-CA", {
+      month: "2-digit",
+      timeZone: "Europe/Berlin",
+    });
+    const day = currentSelectedDate.toLocaleDateString("en-CA", {
+      day: "2-digit",
+      timeZone: "Europe/Berlin",
+    });
+    const formattedDate = `${year}-${month}-${day}`; // YYYY-MM-DD
     datePickerInput.value = formattedDate;
 
     // For Safari and iOS, we need to make the input briefly visible for the picker to work
@@ -256,18 +269,38 @@ function handleDatePickerChange(event: Event) {
   const datePickerInput = event.target as HTMLInputElement;
   if (!datePickerInput.value) return;
 
-  // Parse the selected date and convert to German time
-  const selectedDate = convertToGermanTime(new Date(datePickerInput.value));
-  // Ensure date is valid and not in the future (in German time)
-  const today = getGermanToday();
+  // The input value is 'YYYY-MM-DD'. Create a date object assuming this represents
+  // the date in the user's local timezone, aiming for midnight.
+  // Using YYYY-MM-DDT00:00:00 ensures it's parsed as local midnight.
+  const localDateAtMidnight = new Date(datePickerInput.value + "T00:00:00");
 
-  if (selectedDate.getTime() > today.getTime()) {
-    console.log("Cannot select future date");
+  if (isNaN(localDateAtMidnight.getTime())) {
+    console.error("Invalid date selected from picker:", datePickerInput.value);
+    return;
+  }
+
+  // Now, convert this local midnight representation to the equivalent German time
+  // and ensure it's set to the *start* of that day in Germany.
+  let selectedDateGerman = convertToGermanTime(localDateAtMidnight);
+  selectedDateGerman.setHours(0, 0, 0, 0); // Ensure it's the beginning of the day in German time context
+
+  // Ensure date is not in the future (in German time)
+  const today = getGermanToday(); // Already represents start of day in German time
+
+  if (selectedDateGerman.getTime() > today.getTime()) {
+    console.log(
+      "Cannot select future date. Selected:",
+      selectedDateGerman.toLocaleDateString("de-DE"),
+      "Today:",
+      today.toLocaleDateString("de-DE")
+    );
+    // Optionally reset the picker to the current date or max date
+    // datePickerInput.value = currentSelectedDate.toISOString().split("T")[0]; // Revert
     return;
   }
 
   // Update selected date and refresh the chart
-  currentSelectedDate = selectedDate;
+  currentSelectedDate = selectedDateGerman; // It's already set to start of day German time
   showLoadingState();
 
   if (window.Wized) {
@@ -285,28 +318,40 @@ function handleDatePickerChange(event: Event) {
 
 // Navigate between days
 function navigateDays(days: number) {
-  const newDate = new Date(currentSelectedDate);
-  newDate.setDate(currentSelectedDate.getDate() + days);
-  newDate.setHours(0, 0, 0, 0);
+  const currentTimestamp = currentSelectedDate.getTime();
+  // Calculate new timestamp based on UTC days
+  const newTimestamp = currentTimestamp + days * 24 * 60 * 60 * 1000;
+  let newDate = new Date(newTimestamp);
 
-  const today = getGermanToday();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(today.getDate() + 1);
+  // We still need to compare against the start of "tomorrow" in German time.
+  const today = getGermanToday(); // Represents start of today in German time
+  const tomorrowTimestamp = today.getTime() + 24 * 60 * 60 * 1000;
+  const tomorrow = new Date(tomorrowTimestamp); // Represents start of tomorrow in German time
 
   console.log(
     "Current Selected Date before check:",
     currentSelectedDate.toISOString()
   );
-  console.log("New Date to navigate to:", newDate.toISOString());
-  console.log("Tomorrow's Date (German time):", tomorrow.toISOString());
+  console.log(
+    "New Date to navigate to (UTC):",
+    new Date(newTimestamp).toISOString()
+  );
+  console.log("Tomorrow's Date (German time start):", tomorrow.toISOString());
 
-  if (newDate >= tomorrow) {
-    // Use >= to prevent navigating *to* tomorrow
+  // Compare the timestamp of the *start* of the new day against the *start* of tomorrow
+  // To get the start of the new day in German time, convert it and reset hours
+  let newDateStartOfDayGerman = convertToGermanTime(new Date(newTimestamp));
+  newDateStartOfDayGerman.setHours(0, 0, 0, 0); // Reset hours *after* converting to German time context
+
+  // Compare timestamps for the start of the day
+  if (newDateStartOfDayGerman.getTime() >= tomorrow.getTime()) {
     console.log("Cannot navigate to tomorrow or later.");
     return;
   }
 
-  currentSelectedDate = new Date(newDate);
+  // Set currentSelectedDate to the *start* of the new day in German time
+  currentSelectedDate = newDateStartOfDayGerman;
+
   showLoadingState(); // Show loading indicator immediately
   updateNextButtonState(); // Update button state immediately (will be disabled due to loading)
 
