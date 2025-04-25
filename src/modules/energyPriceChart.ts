@@ -24,17 +24,58 @@ declare global {
 
 // Helper function to convert any date to German time (CET/CEST)
 function convertToGermanTime(date: Date): Date {
-  // Create a date string in ISO format with the German timezone offset
+  // Get the current time difference between local time and UTC
+  const localOffset = date.getTimezoneOffset();
+
+  // Create a date object for the same timestamp, but interpreted as if in Berlin timezone
+  const tempDate = new Date(date.getTime());
+
+  // Calculate UTC date (as epoch)
+  const utcTime = tempDate.getTime() + localOffset * 60 * 1000;
+
+  // European times: UTC+1 (winter/CET) or UTC+2 (summer/CEST)
+  // We can determine this with Intl.DateTimeFormat to get precise DST transitions
+  const berlinTimeStr = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: false,
+  }).format(date);
+
+  // Parse this properly formatted string into a Date
+  const [datePart, timePart] = berlinTimeStr.split(", ");
+  const [day, month, year] = datePart.split("/").map(Number);
+  const [hour, minute, second] = timePart.split(":").map(Number);
+
   const germanDate = new Date(
-    date.toLocaleString("en-US", { timeZone: "Europe/Berlin" })
+    Date.UTC(year, month - 1, day, hour, minute, second)
   );
   return germanDate;
 }
 
 // Helper function to get "today" in German time
 function getGermanToday(): Date {
-  const germanToday = convertToGermanTime(new Date());
-  germanToday.setHours(0, 0, 0, 0);
+  // Get the current date in German timezone
+  const berlinTimeStr = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).format(new Date());
+
+  // Parse this properly formatted string
+  const [day, month, year] = berlinTimeStr.split("/").map(Number);
+
+  // Create midnight in German time - explicitly as midnight
+  const germanToday = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+
+  console.log("German today raw:", berlinTimeStr);
+  console.log("Parsed as midnight German time:", germanToday.toISOString());
+
   return germanToday;
 }
 
@@ -57,26 +98,69 @@ export function initEnergyPriceChart() {
 function setupWizedIntegration() {
   window.Wized = window.Wized || [];
   window.Wized.push((Wized: any) => {
-    // Initialize chart structure and basic UI first
+    // Initialize chart structure and basic UI first - do this immediately for perceived performance
+    console.time("chartInitialization");
     initChart();
-    updateDateDisplay(currentSelectedDate); // Displays today initially
+    console.timeEnd("chartInitialization");
+
+    // Log timezone information for debugging
+    console.log(
+      "Browser timezone:",
+      Intl.DateTimeFormat().resolvedOptions().timeZone
+    );
+    console.log("Browser local time:", new Date().toISOString());
+
+    // Get current German time and use it for initial display
+    currentSelectedDate = getGermanToday(); // Use getGermanToday for consistency
+    console.log(
+      "Current selected date (German midnight):",
+      currentSelectedDate.toISOString()
+    );
+
+    updateDateDisplay(currentSelectedDate); // Displays today in German time
     updateNextButtonState();
 
-    console.log("Forcing initial load for the current day.");
+    console.log("Forcing initial load for the current day (German time).");
 
     // 1. Calculate today's date range in German time
     const today = getGermanToday();
+    console.log("German today (midnight):", today.toISOString());
+
+    // Start date is today at 00:00 German time (should already be this way)
     const initialStartDate = new Date(today);
-    initialStartDate.setHours(0, 0, 0, 0);
+    // End date is today at 23:59 German time
     const initialEndDate = new Date(today);
-    initialEndDate.setDate(initialStartDate.getDate() + 1);
-    initialEndDate.setHours(0, 0, 0, 0);
+    initialEndDate.setUTCHours(23, 59, 59);
+
+    console.log(
+      "Start date (German midnight):",
+      initialStartDate.toISOString()
+    );
+    console.log("End date (German 23:59:59):", initialEndDate.toISOString());
+
     const initialPeriodStart = formatDateToENTSOE(initialStartDate);
     const initialPeriodEnd = formatDateToENTSOE(initialEndDate);
+
+    console.log(
+      "API request period:",
+      initialPeriodStart,
+      "to",
+      initialPeriodEnd
+    );
 
     // 2. Update Wized variables to today's date range
     // We show loading state *before* updating variables and triggering the request
     showLoadingState();
+
+    // Start timeout check for API response - auto-fail after 15 seconds
+    const loadingTimeout = setTimeout(() => {
+      if (document.body.classList.contains("chart-loading")) {
+        console.warn("API request timeout after 15 seconds - showing fallback");
+        hideLoadingState();
+        handleNoDataForDate();
+      }
+    }, 15000);
+
     const variablesUpdated = updateWizedVariables(
       initialPeriodStart,
       initialPeriodEnd,
@@ -86,14 +170,25 @@ function setupWizedIntegration() {
     // 3. Always execute the API request for today's data
     if (Wized.requests?.execute) {
       console.log("Executing initial XLMtoJSON request for today's data.");
-      Wized.requests.execute("XLMtoJSON").catch((error: any) => {
-        console.error("Error executing initial XLMtoJSON request:", error);
-        handleNoDataForDate(); // Clear chart and hide loading on error
-      });
+      console.time("apiRequestTime");
+      Wized.requests
+        .execute("XLMtoJSON")
+        .then(() => {
+          console.timeEnd("apiRequestTime");
+          console.log("XLMtoJSON request completed successfully");
+          clearTimeout(loadingTimeout); // Clear timeout on success
+        })
+        .catch((error: any) => {
+          console.timeEnd("apiRequestTime");
+          console.error("Error executing initial XLMtoJSON request:", error);
+          clearTimeout(loadingTimeout); // Clear timeout on error
+          handleNoDataForDate(); // Clear chart and hide loading on error
+        });
       // Loading state will be hidden by the watcher when data arrives/fails
     } else {
       console.error("Wized.requests.execute not available for initial load!");
       // Hide loading if we cannot trigger the request
+      clearTimeout(loadingTimeout);
       hideLoadingState();
     }
 
@@ -103,11 +198,15 @@ function setupWizedIntegration() {
         () => Wized.data?.r?.XLMtoJSON?.data,
         (newData: any, oldData: any) => {
           console.log("Wized data watcher triggered.");
+          clearTimeout(loadingTimeout); // Clear timeout when watcher triggers
+
           if (!newData) {
             console.log("Watcher received null/undefined data.");
             handleNoDataForDate();
             return;
           }
+
+          console.time("chartDataProcessing");
           if (isValidChartData(newData) && !isDataUnchanged(newData, oldData)) {
             console.log(
               "Watcher received valid & changed data, updating chart."
@@ -124,6 +223,7 @@ function setupWizedIntegration() {
             // (might happen if initial load variables were already correct)
             hideLoadingState();
           }
+          console.timeEnd("chartDataProcessing");
         },
         { deep: true }
       );
@@ -147,6 +247,12 @@ function setupDateNavigation() {
   prevButton.innerHTML = "‹";
   prevButton.className = "date-nav-button date-nav-prev";
   prevButton.setAttribute("aria-label", "Vorheriger Tag");
+  prevButton.setAttribute("id", "prevDayButton");
+  prevButton.type = "button"; // Explicitly set button type
+
+  // Create date display container that will contain the date display and the date picker
+  const dateDisplayContainer = document.createElement("div");
+  dateDisplayContainer.className = "date-display-container";
 
   // Create date display that will act as a button to open the date picker
   const dateDisplay = document.createElement("div");
@@ -155,33 +261,45 @@ function setupDateNavigation() {
   dateDisplay.setAttribute("role", "button");
   dateDisplay.setAttribute("tabindex", "0");
   dateDisplay.setAttribute("aria-label", "Datum auswählen");
+  // Add calendar icon to indicate it's clickable
+  dateDisplay.innerHTML =
+    '<span id="dateDisplayText"></span><span class="calendar-icon"></span>';
 
   // Create hidden date input that will serve as our calendar
   const datePickerInput = document.createElement("input");
   datePickerInput.type = "date";
   datePickerInput.id = "datePickerInput";
   datePickerInput.className = "date-picker-input";
-  // Set max date to today to prevent selecting future dates
-  const today = new Date();
-  datePickerInput.max = today.toISOString().split("T")[0]; // Format: YYYY-MM-DD
+
+  // Set max date to today (in German time) to prevent selecting future dates
+  const today = getGermanToday();
+  const year = today.getUTCFullYear();
+  const month = String(today.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(today.getUTCDate()).padStart(2, "0");
+  datePickerInput.max = `${year}-${month}-${day}`;
 
   // Position it absolutely but make it accessible for click/focus events
   datePickerInput.style.position = "absolute";
   datePickerInput.style.opacity = "0";
-  datePickerInput.style.height = "0";
-  datePickerInput.style.width = "0";
+  datePickerInput.style.height = "1px";
+  datePickerInput.style.width = "1px";
   datePickerInput.style.zIndex = "-1";
   // Prevent iOS zoom on focus
   datePickerInput.style.fontSize = "16px";
+
+  // Add date display and picker to container
+  dateDisplayContainer.appendChild(dateDisplay);
+  dateDisplayContainer.appendChild(datePickerInput);
 
   const nextButton = document.createElement("button");
   nextButton.innerHTML = "›";
   nextButton.className = "date-nav-button date-nav-next";
   nextButton.setAttribute("aria-label", "Nächster Tag");
+  nextButton.setAttribute("id", "nextDayButton");
+  nextButton.type = "button"; // Explicitly set button type
 
   dateNavContainer.appendChild(prevButton);
-  dateNavContainer.appendChild(dateDisplay);
-  dateNavContainer.appendChild(datePickerInput); // Add the hidden input to the DOM
+  dateNavContainer.appendChild(dateDisplayContainer);
   dateNavContainer.appendChild(nextButton);
 
   // Insert date navigation - ideally next to the title if structure allows
@@ -197,15 +315,49 @@ function setupDateNavigation() {
     }
   }
 
-  // Event listeners
-  prevButton.addEventListener("click", () => navigateDays(-1));
-  nextButton.addEventListener("click", () => navigateDays(1));
+  // Event listeners with improved handling and stopping propagation
+  prevButton.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation(); // Stop event from bubbling
+    console.log("Previous day button clicked");
+    if (!prevButton.disabled) {
+      navigateDays(-1);
+    } else {
+      console.log("Previous button is disabled, ignoring click");
+    }
+  });
+
+  nextButton.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation(); // Stop event from bubbling
+    console.log("Next day button clicked");
+    if (!nextButton.disabled && nextButton.style.display !== "none") {
+      navigateDays(1);
+    } else {
+      console.log("Next button is disabled or hidden, ignoring click");
+    }
+  });
 
   // Make the date display clickable to open the date picker
-  dateDisplay.addEventListener("click", openDatePicker);
+  dateDisplay.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation(); // Stop event from bubbling
+    console.log("Date display clicked");
+    openDatePicker();
+  });
+
+  dateDisplay.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    e.stopPropagation(); // Stop event from bubbling
+    console.log("Date display touched");
+    openDatePicker();
+  });
+
   dateDisplay.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
+      e.stopPropagation(); // Stop event from bubbling
+      console.log("Date display keydown");
       openDatePicker();
     }
   });
@@ -219,49 +371,85 @@ function setupDateNavigation() {
 
 // Open the date picker when clicking on date display
 function openDatePicker() {
+  console.log("Opening date picker...");
   const datePickerInput = document.getElementById(
     "datePickerInput"
   ) as HTMLInputElement;
-  if (datePickerInput) {
-    // Set the current value to match the currently selected date
-    // Format currentSelectedDate (which is German time) to YYYY-MM-DD
-    const year = currentSelectedDate.toLocaleDateString("en-CA", {
-      year: "numeric",
-      timeZone: "Europe/Berlin",
-    });
-    const month = currentSelectedDate.toLocaleDateString("en-CA", {
-      month: "2-digit",
-      timeZone: "Europe/Berlin",
-    });
-    const day = currentSelectedDate.toLocaleDateString("en-CA", {
-      day: "2-digit",
-      timeZone: "Europe/Berlin",
-    });
-    const formattedDate = `${year}-${month}-${day}`; // YYYY-MM-DD
-    datePickerInput.value = formattedDate;
 
-    // For Safari and iOS, we need to make the input briefly visible for the picker to work
-    datePickerInput.style.opacity = "1";
-    datePickerInput.style.height = "100%";
-    datePickerInput.style.width = "100%";
-    datePickerInput.style.position = "fixed";
-    datePickerInput.style.top = "0";
-    datePickerInput.style.left = "0";
-    datePickerInput.style.zIndex = "9999";
-
-    // Focus and click to open the picker
-    datePickerInput.focus();
-    datePickerInput.click();
-
-    // Hide it again after a short delay
-    setTimeout(() => {
-      datePickerInput.style.opacity = "0";
-      datePickerInput.style.height = "0";
-      datePickerInput.style.width = "0";
-      datePickerInput.style.position = "absolute";
-      datePickerInput.style.zIndex = "-1";
-    }, 100);
+  if (!datePickerInput) {
+    console.error("Date picker input element not found!");
+    return;
   }
+
+  // Format date as YYYY-MM-DD from UTC components to avoid timezone issues
+  const year = currentSelectedDate.getUTCFullYear();
+  const month = String(currentSelectedDate.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(currentSelectedDate.getUTCDate()).padStart(2, "0");
+  const formattedDate = `${year}-${month}-${day}`;
+
+  console.log(
+    "Setting date picker to:",
+    formattedDate,
+    "from",
+    currentSelectedDate.toISOString()
+  );
+  datePickerInput.value = formattedDate;
+
+  // Add overlay to capture clicks outside the picker
+  let overlay = document.querySelector(".date-picker-overlay") as HTMLElement;
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.className = "date-picker-overlay";
+    document.body.appendChild(overlay);
+
+    // Close the picker when clicking outside
+    overlay.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeDatePicker();
+    });
+  }
+
+  // Show the date picker with proper positioning
+  datePickerInput.classList.add("visible");
+  overlay.classList.add("visible");
+
+  // Slight delay to ensure DOM updates before focus/click
+  setTimeout(() => {
+    console.log("Focusing and clicking date input...");
+    datePickerInput.focus();
+    // Use direct .showPicker() method if available
+    if (typeof datePickerInput.showPicker === "function") {
+      try {
+        datePickerInput.showPicker();
+        console.log("Used showPicker() method");
+      } catch (e) {
+        console.log("showPicker() failed, falling back to click:", e);
+        datePickerInput.click();
+      }
+    } else {
+      datePickerInput.click();
+      console.log("Used click() method (showPicker not available)");
+    }
+  }, 50);
+}
+
+// Close the date picker
+function closeDatePicker() {
+  const datePickerInput = document.getElementById(
+    "datePickerInput"
+  ) as HTMLInputElement;
+  const overlay = document.querySelector(".date-picker-overlay") as HTMLElement;
+
+  if (datePickerInput) {
+    datePickerInput.classList.remove("visible");
+  }
+
+  if (overlay) {
+    overlay.classList.remove("visible");
+  }
+
+  console.log("Date picker closed");
 }
 
 // Handle date selection from the date picker
@@ -269,38 +457,33 @@ function handleDatePickerChange(event: Event) {
   const datePickerInput = event.target as HTMLInputElement;
   if (!datePickerInput.value) return;
 
-  // The input value is 'YYYY-MM-DD'. Create a date object assuming this represents
-  // the date in the user's local timezone, aiming for midnight.
-  // Using YYYY-MM-DDT00:00:00 ensures it's parsed as local midnight.
-  const localDateAtMidnight = new Date(datePickerInput.value + "T00:00:00");
+  console.log("Date picker value:", datePickerInput.value);
 
-  if (isNaN(localDateAtMidnight.getTime())) {
-    console.error("Invalid date selected from picker:", datePickerInput.value);
+  // Parse the date parts from the YYYY-MM-DD value
+  const [year, month, day] = datePickerInput.value.split("-").map(Number);
+
+  // Create midnight on that date in German timezone
+  const selectedDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+
+  console.log(
+    "Date picker selected date (German midnight):",
+    selectedDate.toISOString()
+  );
+
+  // Ensure date is valid and not in the future (in German time)
+  const today = getGermanToday();
+
+  if (selectedDate.getTime() > today.getTime()) {
+    console.log("Cannot select future date");
+    closeDatePicker();
     return;
   }
 
-  // Now, convert this local midnight representation to the equivalent German time
-  // and ensure it's set to the *start* of that day in Germany.
-  let selectedDateGerman = convertToGermanTime(localDateAtMidnight);
-  selectedDateGerman.setHours(0, 0, 0, 0); // Ensure it's the beginning of the day in German time context
-
-  // Ensure date is not in the future (in German time)
-  const today = getGermanToday(); // Already represents start of day in German time
-
-  if (selectedDateGerman.getTime() > today.getTime()) {
-    console.log(
-      "Cannot select future date. Selected:",
-      selectedDateGerman.toLocaleDateString("de-DE"),
-      "Today:",
-      today.toLocaleDateString("de-DE")
-    );
-    // Optionally reset the picker to the current date or max date
-    // datePickerInput.value = currentSelectedDate.toISOString().split("T")[0]; // Revert
-    return;
-  }
+  // Close the date picker
+  closeDatePicker();
 
   // Update selected date and refresh the chart
-  currentSelectedDate = selectedDateGerman; // It's already set to start of day German time
+  currentSelectedDate = selectedDate;
   showLoadingState();
 
   if (window.Wized) {
@@ -318,40 +501,50 @@ function handleDatePickerChange(event: Event) {
 
 // Navigate between days
 function navigateDays(days: number) {
-  const currentTimestamp = currentSelectedDate.getTime();
-  // Calculate new timestamp based on UTC days
-  const newTimestamp = currentTimestamp + days * 24 * 60 * 60 * 1000;
-  let newDate = new Date(newTimestamp);
-
-  // We still need to compare against the start of "tomorrow" in German time.
-  const today = getGermanToday(); // Represents start of today in German time
-  const tomorrowTimestamp = today.getTime() + 24 * 60 * 60 * 1000;
-  const tomorrow = new Date(tomorrowTimestamp); // Represents start of tomorrow in German time
-
   console.log(
-    "Current Selected Date before check:",
+    `Navigating ${days > 0 ? "forward" : "backward"} by ${Math.abs(
+      days
+    )} day(s)`
+  );
+
+  // Create a new date based on the current selected date
+  const newDate = new Date(currentSelectedDate);
+  // Add days using UTC to maintain time consistency
+  newDate.setUTCDate(currentSelectedDate.getUTCDate() + days);
+
+  const today = getGermanToday();
+  const tomorrow = new Date(today);
+  tomorrow.setUTCDate(today.getUTCDate() + 1);
+
+  // Use German time for all logging to help with debugging
+  console.log(
+    "Navigation - Current date:",
+    formatDate(currentSelectedDate),
     currentSelectedDate.toISOString()
   );
   console.log(
-    "New Date to navigate to (UTC):",
-    new Date(newTimestamp).toISOString()
+    "Navigation - New date:",
+    formatDate(newDate),
+    newDate.toISOString()
   );
-  console.log("Tomorrow's Date (German time start):", tomorrow.toISOString());
+  console.log(
+    "Navigation - Today (German):",
+    formatDate(today),
+    today.toISOString()
+  );
+  console.log(
+    "Navigation - Tomorrow (German):",
+    formatDate(tomorrow),
+    tomorrow.toISOString()
+  );
 
-  // Compare the timestamp of the *start* of the new day against the *start* of tomorrow
-  // To get the start of the new day in German time, convert it and reset hours
-  let newDateStartOfDayGerman = convertToGermanTime(new Date(newTimestamp));
-  newDateStartOfDayGerman.setHours(0, 0, 0, 0); // Reset hours *after* converting to German time context
-
-  // Compare timestamps for the start of the day
-  if (newDateStartOfDayGerman.getTime() >= tomorrow.getTime()) {
+  if (newDate >= tomorrow) {
+    // Use >= to prevent navigating *to* tomorrow
     console.log("Cannot navigate to tomorrow or later.");
     return;
   }
 
-  // Set currentSelectedDate to the *start* of the new day in German time
-  currentSelectedDate = newDateStartOfDayGerman;
-
+  currentSelectedDate = new Date(newDate);
   showLoadingState(); // Show loading indicator immediately
   updateNextButtonState(); // Update button state immediately (will be disabled due to loading)
 
@@ -371,57 +564,91 @@ function navigateDays(days: number) {
 // Update next button state (hidden if date is today, disabled if loading)
 function updateNextButtonState() {
   const nextButton = document.querySelector(
-    ".date-nav-next"
+    "#nextDayButton"
   ) as HTMLButtonElement;
-  if (!nextButton) return;
+  const prevButton = document.querySelector(
+    "#prevDayButton"
+  ) as HTMLButtonElement;
+
+  if (!nextButton || !prevButton) {
+    console.warn("Navigation buttons not found for state update");
+    return;
+  }
 
   const today = getGermanToday();
   const selectedDay = new Date(currentSelectedDate);
-  selectedDay.setHours(0, 0, 0, 0);
 
-  // Hide the next button completely if the selected date is today
-  // Otherwise, just disable it if we're loading
+  // Compare dates using time strings to avoid timezone issues
+  const isToday =
+    selectedDay.toISOString().substring(0, 10) ===
+    today.toISOString().substring(0, 10);
   const isLoading = document.body.classList.contains("chart-loading");
 
-  if (selectedDay.getTime() === today.getTime()) {
-    // Today's date - hide button completely
+  console.log("Updating button states:", {
+    isToday,
+    isLoading,
+    selectedDate: formatDate(selectedDay),
+    today: formatDate(today),
+  });
+
+  // Next button: hide on today, disable when loading
+  if (isToday) {
     nextButton.style.display = "none";
   } else {
-    // Past date - show button but possibly disable if loading
     nextButton.style.display = "inline-flex";
     nextButton.disabled = isLoading;
     nextButton.classList.toggle("disabled", isLoading);
   }
 
-  // Also update prev button state based on loading
-  const prevButton = document.querySelector(
-    ".date-nav-prev"
-  ) as HTMLButtonElement;
-  if (prevButton) {
-    prevButton.disabled = isLoading;
-    prevButton.classList.toggle("disabled", isLoading);
-  }
+  // Previous button: always visible, but disabled when loading
+  prevButton.disabled = isLoading;
+  prevButton.classList.toggle("disabled", isLoading);
+
+  // For reference - log the button states
+  console.log("Button states:", {
+    nextButtonVisible: nextButton.style.display !== "none",
+    nextButtonEnabled: !nextButton.disabled,
+    prevButtonEnabled: !prevButton.disabled,
+  });
 }
 
 // Handle date change: update display, Wized vars, and trigger API request
 function handleDateChange(newDate: Date, Wized: any) {
+  console.log("handleDateChange called with date:", formatDate(newDate));
+
   // Accept Wized object
   currentSelectedDate = newDate;
   updateDateDisplay(currentSelectedDate);
 
+  // For API requests, we need:
+  // 1. Start: the selected date at 00:00 German time
+  // 2. End: the same day at 23:59:59 German time
+
+  // Start date should already be at midnight
   const startDate = new Date(newDate);
-  startDate.setHours(0, 0, 0, 0);
+
+  // End date is the same day at 23:59:59
   const endDate = new Date(newDate);
-  // ENTSO-E API uses the start of the *next* day as the end period for a full day query
-  endDate.setDate(startDate.getDate() + 1);
-  endDate.setHours(0, 0, 0, 0);
+  endDate.setUTCHours(23, 59, 59);
+
+  console.log("Date change - start date:", startDate.toISOString());
+  console.log("Date change - end date:", endDate.toISOString());
 
   const periodStart = formatDateToENTSOE(startDate);
   const periodEnd = formatDateToENTSOE(endDate);
 
-  console.log(`Attempting to set Wized vars for: ${formatDate(newDate)}`);
+  console.log(`Request period: ${periodStart} to ${periodEnd}`);
   // Log the Wized requests API availability
   console.log("Wized requests API available:", !!Wized?.requests?.execute);
+
+  // Set a timeout for the API request to prevent hanging
+  const requestTimeout = setTimeout(() => {
+    if (document.body.classList.contains("chart-loading")) {
+      console.warn("Request timeout after 15 seconds - showing fallback");
+      hideLoadingState();
+      handleNoDataForDate();
+    }
+  }, 15000);
 
   // Pass Wized object to updateWizedVariables
   const variablesChanged = updateWizedVariables(periodStart, periodEnd, Wized);
@@ -434,14 +661,19 @@ function handleDateChange(newDate: Date, Wized: any) {
           newDate
         )}`
       );
+      console.time("dateChangeApiRequest");
       Wized.requests
         .execute("XLMtoJSON")
         .then(() => {
+          console.timeEnd("dateChangeApiRequest");
           console.log("XLMtoJSON request completed successfully");
+          clearTimeout(requestTimeout);
         })
         .catch((error: any) => {
+          console.timeEnd("dateChangeApiRequest");
           console.error("Error executing XLMtoJSON request:", error);
           // Handle error: Clear chart, show message, hide loading
+          clearTimeout(requestTimeout);
           handleNoDataForDate();
         });
       // Loading state will be hidden by the watcher when data arrives or if request fails
@@ -451,14 +683,24 @@ function handleDateChange(newDate: Date, Wized: any) {
       console.error(
         "Variables changed, but Wized.requests.execute not available! Relying on reactivity."
       );
-      // Keep loading state active, maybe the watcher will pick it up?
-      // Or hide after a timeout? For now, leave it to the watcher.
+      // Set a safety timeout to hide loading if the watcher doesn't trigger
+      clearTimeout(requestTimeout);
+      setTimeout(() => {
+        if (document.body.classList.contains("chart-loading")) {
+          console.warn(
+            "Safety timeout - hiding loading state after 10s inactivity"
+          );
+          hideLoadingState();
+          handleNoDataForDate();
+        }
+      }, 10000);
     }
   } else {
     // If variable update was skipped (variables were already correct)
     console.log(
       "Variable update skipped (already correct), hiding loading state."
     );
+    clearTimeout(requestTimeout);
     hideLoadingState(); // Hide loading immediately
   }
 }
@@ -466,20 +708,38 @@ function handleDateChange(newDate: Date, Wized: any) {
 // Update the date display UI element
 function updateDateDisplay(date: Date) {
   const dateDisplayElement = document.getElementById("dateDisplay");
-  if (dateDisplayElement) {
+  const dateDisplayText = document.getElementById("dateDisplayText");
+
+  if (dateDisplayElement && !dateDisplayText) {
+    // Handle legacy case - make it compatible with older structure
+    console.log("Updating date display (legacy mode)");
     dateDisplayElement.textContent = formatDate(date);
+    return;
+  }
+
+  if (dateDisplayText) {
+    console.log("Updating date display:", formatDate(date));
+    dateDisplayText.textContent = formatDate(date);
+  } else {
+    console.warn("Date display element not found for update");
   }
 }
 
 // Format date for ENTSO-E API (YYYYMMDDHHMM)
 function formatDateToENTSOE(date: Date): string {
-  return (
-    date.getFullYear() +
-    String(date.getMonth() + 1).padStart(2, "0") +
-    String(date.getDate()).padStart(2, "0") +
-    String(date.getHours()).padStart(2, "0") +
-    "00"
+  // The date we receive should already be in the correct timezone
+  // Format with proper hours and minutes
+  const formatted =
+    date.getUTCFullYear() +
+    String(date.getUTCMonth() + 1).padStart(2, "0") +
+    String(date.getUTCDate()).padStart(2, "0") +
+    String(date.getUTCHours()).padStart(2, "0") +
+    String(date.getUTCMinutes()).padStart(2, "0");
+
+  console.log(
+    `Formatting ${date.toISOString()} to ENTSO-E format: ${formatted}`
   );
+  return formatted;
 }
 
 // Update Wized variables - Accepts Wized object
@@ -641,11 +901,15 @@ function formatTimeFromPosition(position: number): string {
 // Format date for display (DD.MM.YYYY)
 function formatDate(date: Date): string {
   if (!(date instanceof Date) || isNaN(date.getTime())) return "--.--.----";
-  return date.toLocaleDateString("de-DE", {
+
+  // Always create a new Intl.DateTimeFormat instance that's guaranteed to use German formatting
+  // This ensures consistent display regardless of user's locale settings
+  return new Intl.DateTimeFormat("de-DE", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-  });
+    timeZone: "Europe/Berlin", // Explicitly set timezone to Berlin (German time)
+  }).format(date);
 }
 
 // Convert MWh price (EUR) to Cents/kWh
@@ -673,6 +937,7 @@ function updateChartWithWizedData(data: any) {
 
   console.log("Updating chart with Wized data...");
   try {
+    console.time("chartDataPrep");
     const period = data.timeSeries[0].periods[0];
     const points = period.points;
 
@@ -683,53 +948,86 @@ function updateChartWithWizedData(data: any) {
       return;
     }
 
-    const labels = points.map((point: any) => (point.position - 1).toString()); // 0-23
-    const pricesInCentsPerKWh = points.map((point: any) =>
-      convertMWhToCentsPerKWh(point.price)
-    );
+    // Pre-allocate arrays for performance
+    const labels = new Array(points.length);
+    const pricesInCentsPerKWh = new Array(points.length);
 
-    // Check if prices array is valid
-    if (pricesInCentsPerKWh.length === 0 || pricesInCentsPerKWh.every(isNaN)) {
+    // Process all points in one loop for better performance
+    let minPrice = Infinity;
+    let maxPrice = -Infinity;
+    let minPriceIndex = -1;
+    let maxPriceIndex = -1;
+    let totalPrice = 0;
+    let validPriceCount = 0;
+
+    // Single pass through data for better performance
+    for (let i = 0; i < points.length; i++) {
+      labels[i] = (points[i].position - 1).toString(); // 0-23
+      const price = convertMWhToCentsPerKWh(points[i].price);
+      pricesInCentsPerKWh[i] = price;
+
+      if (!isNaN(price)) {
+        if (price < minPrice) {
+          minPrice = price;
+          minPriceIndex = i;
+        }
+        if (price > maxPrice) {
+          maxPrice = price;
+          maxPriceIndex = i;
+        }
+        totalPrice += price;
+        validPriceCount++;
+      }
+    }
+
+    // Check if prices array is valid after processing
+    if (validPriceCount === 0) {
       console.warn("Processed prices resulted in empty or invalid array.");
       handleNoDataForDate();
       return;
     }
 
-    let minPrice = Math.min(...pricesInCentsPerKWh.filter((p) => !isNaN(p)));
-    let maxPrice = Math.max(...pricesInCentsPerKWh.filter((p) => !isNaN(p)));
-    let validPrices = pricesInCentsPerKWh.filter((p) => !isNaN(p));
-    let totalPrice = validPrices.reduce(
-      (sum: number, price: number) => sum + price,
-      0
-    );
-    let avgPrice = validPrices.length > 0 ? totalPrice / validPrices.length : 0;
+    const avgPrice = totalPrice / validPriceCount;
+    const minPriceHour =
+      minPriceIndex !== -1
+        ? formatTimeFromPosition(points[minPriceIndex].position)
+        : "N/A";
+    const maxPriceHour =
+      maxPriceIndex !== -1
+        ? formatTimeFromPosition(points[maxPriceIndex].position)
+        : "N/A";
 
-    // Find positions for min/max after filtering NaNs
-    let minPriceIndex = pricesInCentsPerKWh.findIndex((p) => p === minPrice);
-    let maxPriceIndex = pricesInCentsPerKWh.findIndex((p) => p === maxPrice);
-    let minPricePosition =
-      minPriceIndex !== -1 ? points[minPriceIndex]?.position : null;
-    let maxPricePosition =
-      maxPriceIndex !== -1 ? points[maxPriceIndex]?.position : null;
+    console.timeEnd("chartDataPrep");
 
-    let minPriceHour = minPricePosition
-      ? formatTimeFromPosition(minPricePosition)
-      : "N/A";
-    let maxPriceHour = maxPricePosition
-      ? formatTimeFromPosition(maxPricePosition)
-      : "N/A";
-
+    // Update chart and stats - this is the expensive operation
+    console.time("chartRender");
     priceChart.data.labels = labels;
     priceChart.data.datasets[0].data = pricesInCentsPerKWh;
 
+    // Limit animations for faster rendering
+    priceChart.options.animation = {
+      duration: 200, // Very short animation for quicker rendering
+    };
+
     priceChart.update();
-    updatePriceStats(minPrice, maxPrice, avgPrice, minPriceHour, maxPriceHour);
+    console.timeEnd("chartRender");
+
+    // Update stats display after chart is updated (non-blocking)
+    requestAnimationFrame(() => {
+      updatePriceStats(
+        minPrice,
+        maxPrice,
+        avgPrice,
+        minPriceHour,
+        maxPriceHour
+      );
+    });
+
     console.log("Chart updated successfully.");
   } catch (error) {
     console.error("Error updating chart:", error, data);
     handleNoDataForDate(); // This will call hideLoadingState
   }
-  // No finally block needed here as hideLoadingState is called at the start or in handleNoDataForDate
 }
 
 // Handle cases where no data is available for the selected date OR request fails
@@ -832,6 +1130,11 @@ function injectStyles() {
     .date-nav-container {
         display: flex;
         align-items: center;
+        position: relative; /* Required for absolute positioning */
+    }
+    .date-display-container {
+        position: relative; /* Required for absolute positioning */
+        margin: 0 8px;
     }
     .date-nav-button {
         background-color: #f0f0f0;
@@ -842,11 +1145,13 @@ function injectStyles() {
         cursor: pointer;
         font-size: 16px;
         line-height: 1;
-        transition: background-color 0.2s, opacity 0.2s; /* Add opacity transition */
+        transition: background-color 0.2s, opacity 0.2s;
         height: 28px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
+        z-index: 5; /* Ensure buttons are above other elements */
+        position: relative; /* Required for z-index */
     }
     .date-nav-button:hover:not(:disabled) {
         background-color: #e0e0e0;
@@ -854,7 +1159,7 @@ function injectStyles() {
     .date-nav-button:disabled,
     .date-nav-button.disabled {
         opacity: 0.5;
-        cursor: not-allowed !important; /* Ensure cursor style overrides */
+        cursor: not-allowed !important;
     }
     .date-display {
         background-color: #fff;
@@ -863,19 +1168,21 @@ function injectStyles() {
         padding: 5px 12px;
         border-radius: 4px;
         font-size: 14px;
-        margin: 0 8px;
         min-width: 90px;
         text-align: center;
         font-weight: 500;
         height: 28px;
         line-height: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+        position: relative; /* Required for z-index */
+        z-index: 5; /* Ensure visible above other elements */
     }
     .date-picker-trigger {
         cursor: pointer;
         transition: background-color 0.2s, border-color 0.2s;
-        display: flex;
-        align-items: center;
-        justify-content: center;
     }
     .date-picker-trigger:hover {
         background-color: #f8f8f8;
@@ -886,11 +1193,10 @@ function injectStyles() {
         border-color: #4A90E2;
         box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
     }
-    .date-picker-trigger::after {
-        content: '';
+    .calendar-icon {
         display: inline-block;
-        width: 12px;
-        height: 12px;
+        width: 16px;
+        height: 16px;
         margin-left: 6px;
         background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%23555" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>');
         background-size: contain;
@@ -898,10 +1204,66 @@ function injectStyles() {
         background-position: center;
     }
     .date-picker-input {
-        opacity: 0;
         position: absolute;
+        /* Position below date display */
+        top: 100%;
+        left: 0;
+        margin-top: 4px;
+        z-index: 100;
+        /* Match chart styling */
+        font-family: 'Fira Sans', sans-serif;
+        font-size: 16px;
+        color: #333;
+        border-radius: 4px;
+        border: 1px solid #dcdcdc;
+        background-color: #fff;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        /* For different states of visibility */
+        opacity: 0;
+        height: 1px;
+        width: 1px;
+        transition: opacity 0.2s;
+    }
+    /* Make date picker match the chart theme when visible */
+    .date-picker-input.visible {
+        opacity: 1;
+        height: auto;
+        width: auto;
+    }
+    /* Ensure date picker is really hidden when not in use */
+    .date-picker-input:not(.visible) {
         pointer-events: none;
     }
+    
+    /* Create a clickable overlay when date picker is open */
+    .date-picker-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.1);
+        z-index: 90;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s;
+    }
+    .date-picker-overlay.visible {
+        opacity: 1;
+        pointer-events: auto;
+    }
+    
+    /* For browsers that support styling native date inputs */
+    .date-picker-input::-webkit-calendar-picker-indicator {
+        background-color: #4A90E2;
+        padding: 5px;
+        border-radius: 3px;
+    }
+    input[type="date"] {
+        color: #333;
+        background-color: #fff;
+    }
+    
     .chart-scroll-wrapper { /* New wrapper for scrolling */
       overflow-x: auto;
       overflow-y: hidden; /* Prevent vertical scroll */
@@ -1054,8 +1416,22 @@ function initChart() {
       ctx.textAlign = "center";
       ctx.fillStyle = "#555";
 
-      // Draw each price label
-      dataset.data.forEach((value: number, index: number) => {
+      // Draw each price label - only process visible bars for performance
+      const visibleIndices = [];
+      for (let i = 0; i < dataset.data.length; i++) {
+        const xPos = scales.x.getPixelForValue(i);
+        // Only process bars that are in the visible area
+        if (
+          xPos >= chartArea.left - barSpacing &&
+          xPos <= chartArea.right + barSpacing
+        ) {
+          visibleIndices.push(i);
+        }
+      }
+
+      // Only draw labels for visible bars
+      visibleIndices.forEach((index) => {
+        const value = dataset.data[index];
         const xPos = scales.x.getPixelForValue(index);
         const yPos = scales.y.getPixelForValue(value) - 5; // Position above bar
 
@@ -1076,6 +1452,7 @@ function initChart() {
     Chart.register(priceLabelsPlugin);
   }
 
+  // Use faster animation options for the initial render
   priceChart = new Chart(chartCanvas, {
     type: "bar",
     data: {
@@ -1095,6 +1472,9 @@ function initChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false, // Important when container scrolls
+      animation: {
+        duration: 0, // Disable animation for initial render
+      },
       plugins: {
         legend: { display: false },
         title: { display: false }, // Title is handled outside chart now
@@ -1171,11 +1551,12 @@ function initChart() {
   } as ChartConfiguration);
   console.log("Chart structure created.");
 
-  // Add resize listener to update chart responsiveness
-  // Debounce resize handler
+  // Add resize listener with debounce for better performance
   let resizeTimeout: number;
   window.addEventListener("resize", () => {
+    // Cancel previous timeout
     clearTimeout(resizeTimeout);
+    // Set new timeout - only perform resize if user has stopped resizing
     resizeTimeout = window.setTimeout(() => {
       if (priceChart) {
         console.log("Resizing chart...");
