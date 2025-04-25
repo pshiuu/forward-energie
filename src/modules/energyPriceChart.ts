@@ -1,15 +1,10 @@
 import { onReady } from "@xatom/core";
 import Chart, { ChartConfiguration, FontSpec } from "chart.js/auto"; // Import ChartConfiguration and FontSpec
 
-/**
- * Energy Price Chart Module
- * This module creates a chart similar to the design shown in the image
- */
-
 // Store chart instance globally
 let priceChart: Chart | null = null;
-// Store the currently selected date
-let currentSelectedDate: Date = new Date();
+// Store the currently selected date, always in German time (CET/CEST)
+let currentSelectedDate: Date = convertToGermanTime(new Date());
 // Prevent redundant Wized updates
 let lastWizedUpdateSignature: string | null = null;
 
@@ -25,6 +20,22 @@ declare global {
   interface Window {
     Wized: any;
   }
+}
+
+// Helper function to convert any date to German time (CET/CEST)
+function convertToGermanTime(date: Date): Date {
+  // Create a date string in ISO format with the German timezone offset
+  const germanDate = new Date(
+    date.toLocaleString("en-US", { timeZone: "Europe/Berlin" })
+  );
+  return germanDate;
+}
+
+// Helper function to get "today" in German time
+function getGermanToday(): Date {
+  const germanToday = convertToGermanTime(new Date());
+  germanToday.setHours(0, 0, 0, 0);
+  return germanToday;
 }
 
 export function initEnergyPriceChart() {
@@ -53,8 +64,8 @@ function setupWizedIntegration() {
 
     console.log("Forcing initial load for the current day.");
 
-    // 1. Calculate today's date range
-    const today = new Date();
+    // 1. Calculate today's date range in German time
+    const today = getGermanToday();
     const initialStartDate = new Date(today);
     initialStartDate.setHours(0, 0, 0, 0);
     const initialEndDate = new Date(today);
@@ -245,10 +256,10 @@ function handleDatePickerChange(event: Event) {
   const datePickerInput = event.target as HTMLInputElement;
   if (!datePickerInput.value) return;
 
-  const selectedDate = new Date(datePickerInput.value);
-  // Ensure date is valid and not in the future
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  // Parse the selected date and convert to German time
+  const selectedDate = convertToGermanTime(new Date(datePickerInput.value));
+  // Ensure date is valid and not in the future (in German time)
+  const today = getGermanToday();
 
   if (selectedDate.getTime() > today.getTime()) {
     console.log("Cannot select future date");
@@ -278,8 +289,7 @@ function navigateDays(days: number) {
   newDate.setDate(currentSelectedDate.getDate() + days);
   newDate.setHours(0, 0, 0, 0);
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = getGermanToday();
   const tomorrow = new Date(today);
   tomorrow.setDate(today.getDate() + 1);
 
@@ -288,7 +298,7 @@ function navigateDays(days: number) {
     currentSelectedDate.toISOString()
   );
   console.log("New Date to navigate to:", newDate.toISOString());
-  console.log("Tomorrow's Date:", tomorrow.toISOString());
+  console.log("Tomorrow's Date (German time):", tomorrow.toISOString());
 
   if (newDate >= tomorrow) {
     // Use >= to prevent navigating *to* tomorrow
@@ -320,8 +330,7 @@ function updateNextButtonState() {
   ) as HTMLButtonElement;
   if (!nextButton) return;
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = getGermanToday();
   const selectedDay = new Date(currentSelectedDate);
   selectedDay.setHours(0, 0, 0, 0);
 
