@@ -46,7 +46,6 @@ function createLoaderHTML() {
   // Gradient div using Unicorn Studio
   const gradient = document.createElement("div");
   gradient.id = GRADIENT_ID;
-  gradient.dataset.usProjectSrc = "https://pshiuu.github.io/json-host/fw.json";
   Object.assign(gradient.style, {
     position: "absolute",
     top: "0",
