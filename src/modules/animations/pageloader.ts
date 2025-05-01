@@ -43,18 +43,6 @@ function createLoaderHTML() {
     // The gradient will provide the background
   });
 
-  // Gradient div using Unicorn Studio
-  const gradient = document.createElement("div");
-  gradient.id = GRADIENT_ID;
-  Object.assign(gradient.style, {
-    position: "absolute",
-    top: "0",
-    left: "0",
-    width: "100%",
-    height: "100%",
-    zIndex: "1", // Behind the logo but above page content potentially
-  });
-
   // Create rings container for the ripple effect
   const ringsContainer = document.createElement("div");
   ringsContainer.id = RINGS_CONTAINER_ID;
@@ -107,7 +95,6 @@ function createLoaderHTML() {
   });
 
   // Add elements to the loader
-  loader.appendChild(gradient);
   loader.appendChild(ringsContainer);
   loader.appendChild(logo);
   document.body.appendChild(loader);
