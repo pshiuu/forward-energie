@@ -14,6 +14,7 @@ let logoAnimation: any = null;
 let ringsAnimation: any = null;
 let initialLoadCompleted = false;
 let transitionInProgress = false;
+let scrollPosition = 0; // Store scroll position when disabling scroll
 
 /**
  * Creates the loader HTML structure and appends it to the body.
@@ -110,8 +111,52 @@ function createLoaderHTML() {
         transform: translate3d(0,0,0) scale(1.15);
       }
     }
+    
+    /* Add no-scroll class styles to prevent scrolling */
+    body.no-scroll {
+      overflow: hidden;
+      position: fixed;
+      width: 100%;
+      height: 100%;
+    }
   `;
   document.head.appendChild(styleSheet);
+
+  // Initially disable scrolling since the loader starts visible
+  disableScroll();
+}
+
+/**
+ * Disables page scrolling while loader is active
+ */
+function disableScroll() {
+  if (typeof window === "undefined") return;
+
+  // Store current scroll position
+  scrollPosition = window.pageYOffset || document.documentElement.scrollTop;
+
+  // Add no-scroll class to body
+  document.body.classList.add("no-scroll");
+
+  // Set the body's top position to the negative of the current scroll position
+  // This prevents the visual "jump" when disabling scroll
+  document.body.style.top = `-${scrollPosition}px`;
+}
+
+/**
+ * Enables page scrolling after loader is hidden
+ */
+function enableScroll() {
+  if (typeof window === "undefined") return;
+
+  // Remove no-scroll class
+  document.body.classList.remove("no-scroll");
+
+  // Reset the body position
+  document.body.style.top = "";
+
+  // Restore scroll position
+  window.scrollTo({ top: scrollPosition });
 }
 
 /**
@@ -177,6 +222,9 @@ function showLoader(): Promise<void> {
       return;
     }
 
+    // Disable scrolling
+    disableScroll();
+
     // Set flag that transition is in progress
     transitionInProgress = true;
 
@@ -219,6 +267,10 @@ function hideLoader(): Promise<void> {
       loaderElement.style.visibility = "hidden";
       stopLogoAnimation();
       transitionInProgress = false;
+
+      // Enable scrolling
+      enableScroll();
+
       resolve();
     }, 500); // Match the transition time from CSS
   });
