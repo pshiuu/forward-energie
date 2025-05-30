@@ -38,7 +38,7 @@ export const pulsating = () => {
   pulsatingButtons.forEach((button) => {
     const buttonElement = button as HTMLElement;
     buttonElement.style.animation = "pulsate 3s ease-in-out infinite";
-    buttonElement.style.background = "linear-gradient(45deg, #d5ff6a, #33b276)";
+    buttonElement.style.background = "linear-gradient( #33b276)";
     buttonElement.style.backgroundSize = "200% 200%";
     buttonElement.style.animation =
       "pulsate 3s ease-in-out infinite, gradientShift 6s ease infinite";

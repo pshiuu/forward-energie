@@ -148,51 +148,15 @@ function setupWizedIntegration() {
       initialPeriodEnd
     );
 
-    // 2. Update Wized variables to today's date range
-    // We show loading state *before* updating variables and triggering the request
+    // 2. Show loading state before starting any requests
     showLoadingState();
 
-    // Start timeout check for API response - auto-fail after 15 seconds
-    const loadingTimeout = setTimeout(() => {
-      if (document.body.classList.contains("chart-loading")) {
-        console.warn("API request timeout after 15 seconds - showing fallback");
-        hideLoadingState();
-        handleNoDataForDate();
-      }
-    }, 15000);
+    // Track request attempts for retry logic
+    let requestAttempts = 0;
+    const maxRetries = 3;
+    let loadingTimeout: any;
 
-    const variablesUpdated = updateWizedVariables(
-      initialPeriodStart,
-      initialPeriodEnd,
-      Wized
-    );
-
-    // 3. Always execute the API request for today's data
-    if (Wized.requests?.execute) {
-      console.log("Executing initial XLMtoJSON request for today's data.");
-      console.time("apiRequestTime");
-      Wized.requests
-        .execute("XLMtoJSON")
-        .then(() => {
-          console.timeEnd("apiRequestTime");
-          console.log("XLMtoJSON request completed successfully");
-          clearTimeout(loadingTimeout); // Clear timeout on success
-        })
-        .catch((error: any) => {
-          console.timeEnd("apiRequestTime");
-          console.error("Error executing initial XLMtoJSON request:", error);
-          clearTimeout(loadingTimeout); // Clear timeout on error
-          handleNoDataForDate(); // Clear chart and hide loading on error
-        });
-      // Loading state will be hidden by the watcher when data arrives/fails
-    } else {
-      console.error("Wized.requests.execute not available for initial load!");
-      // Hide loading if we cannot trigger the request
-      clearTimeout(loadingTimeout);
-      hideLoadingState();
-    }
-
-    // Setup the watcher for subsequent data updates (from navigation or other triggers)
+    // CRITICAL FIX: Setup the watcher FIRST, before making any requests
     if (Wized.reactivity && Wized.reactivity.watch) {
       Wized.reactivity.watch(
         () => Wized.data?.r?.XLMtoJSON?.data,
@@ -220,16 +184,119 @@ function setupWizedIntegration() {
               "Wized data watcher: Data is valid but unchanged, hiding loading."
             );
             // Ensure loading is hidden if data comes back but is the same
-            // (might happen if initial load variables were already correct)
             hideLoadingState();
           }
           console.timeEnd("chartDataProcessing");
         },
         { deep: true }
       );
+      console.log("Wized data watcher setup complete");
     } else {
       console.warn("Wized reactivity watcher not available.");
     }
+
+    // Function to set timeout with retry capability
+    function setLoadingTimeout() {
+      loadingTimeout = setTimeout(() => {
+        if (document.body.classList.contains("chart-loading")) {
+          console.warn(
+            `API request timeout after 15 seconds (attempt ${requestAttempts})`
+          );
+          if (requestAttempts < maxRetries) {
+            console.log(
+              `Retrying API request (attempt ${
+                requestAttempts + 1
+              }/${maxRetries})`
+            );
+            executeDataRequest();
+          } else {
+            console.error("Max retries reached, showing fallback");
+            hideLoadingState();
+            handleNoDataForDate();
+          }
+        }
+      }, 15000);
+    }
+
+    // Function to execute the data request with retry logic
+    function executeDataRequest() {
+      requestAttempts++;
+      console.log(`Executing data request (attempt ${requestAttempts})`);
+
+      // Clear any existing timeout
+      clearTimeout(loadingTimeout);
+      setLoadingTimeout();
+
+      // Update Wized variables for this attempt
+      const variablesUpdated = updateWizedVariables(
+        initialPeriodStart,
+        initialPeriodEnd,
+        Wized
+      );
+
+      if (!variablesUpdated) {
+        console.error("Failed to update Wized variables");
+        if (requestAttempts < maxRetries) {
+          setTimeout(() => executeDataRequest(), 1000); // Retry after 1 second
+        } else {
+          clearTimeout(loadingTimeout);
+          hideLoadingState();
+          handleNoDataForDate();
+        }
+        return;
+      }
+
+      // Execute the API request
+      if (Wized.requests?.execute) {
+        console.log("Executing XLMtoJSON request for today's data.");
+        console.time("apiRequestTime");
+        Wized.requests
+          .execute("XLMtoJSON")
+          .then(() => {
+            console.timeEnd("apiRequestTime");
+            console.log("XLMtoJSON request completed successfully");
+            clearTimeout(loadingTimeout);
+            // Note: Chart update will be handled by the watcher
+          })
+          .catch((error: any) => {
+            console.timeEnd("apiRequestTime");
+            console.error("Error executing XLMtoJSON request:", error);
+            clearTimeout(loadingTimeout);
+
+            if (requestAttempts < maxRetries) {
+              console.log(
+                `Retrying after error (attempt ${
+                  requestAttempts + 1
+                }/${maxRetries})`
+              );
+              setTimeout(() => executeDataRequest(), 2000); // Retry after 2 seconds
+            } else {
+              console.error("Max retries reached after API error");
+              handleNoDataForDate();
+            }
+          });
+      } else {
+        console.error("Wized.requests.execute not available!");
+        if (requestAttempts < maxRetries) {
+          setTimeout(() => executeDataRequest(), 1000); // Retry after 1 second
+        } else {
+          clearTimeout(loadingTimeout);
+          hideLoadingState();
+          handleNoDataForDate();
+        }
+      }
+    }
+
+    // 3. Check if data already exists before making a request
+    const existingData = Wized.data?.r?.XLMtoJSON?.data;
+    if (existingData && isValidChartData(existingData)) {
+      console.log("Found existing valid data, using it instead of new request");
+      updateChartWithWizedData(existingData);
+      return;
+    }
+
+    // 4. Start the initial data request with retry capability
+    executeDataRequest();
   });
 }
 
@@ -987,6 +1054,22 @@ function updateChartWithWizedData(data: any) {
       return;
     }
 
+    // --- Highlight 4 lowest prices as green bars ---
+    // Find indices of the 4 lowest prices
+    const priceWithIndices = pricesInCentsPerKWh.map((price, idx) => ({
+      price,
+      idx,
+    }));
+    // Sort by price ascending
+    priceWithIndices.sort((a, b) => a.price - b.price);
+    // Get indices of the 4 lowest prices
+    const lowestIndices = priceWithIndices.slice(0, 4).map((obj) => obj.idx);
+    // Create backgroundColor array
+    const backgroundColor = pricesInCentsPerKWh.map((_, idx) =>
+      lowestIndices.includes(idx) ? "#d5ff6a" : "#33b276"
+    );
+    // --- End highlight logic ---
+
     const avgPrice = totalPrice / validPriceCount;
     const minPriceHour =
       minPriceIndex !== -1
@@ -1003,6 +1086,7 @@ function updateChartWithWizedData(data: any) {
     console.time("chartRender");
     priceChart.data.labels = labels;
     priceChart.data.datasets[0].data = pricesInCentsPerKWh;
+    priceChart.data.datasets[0].backgroundColor = backgroundColor; // <-- Set bar colors
 
     // Limit animations for faster rendering
     priceChart.options.animation = {
@@ -1291,20 +1375,175 @@ function injectStyles() {
         min-width: 700px; /* Set min-width for chart content */
         /* margin-bottom removed, handled by wrapper */
     }
-    #priceStats { display: flex; justify-content: space-around; margin-top: 20px; gap: 15px; flex-wrap: wrap; height: 100%; }
-    .stat-box { flex: 1; min-width: 160px; max-width: 200px; padding: 20px; border-radius: 8px; text-align: left; background-color: #F7F7F7; border-left: none; transition: transform 0.2s; position: relative; }
-    .stat-box::after { content: ''; position: absolute; top: 15px; right: 15px; width: 30px; height: 30px; border-radius: 4px; background-color: #4A90E2; background-repeat: no-repeat; background-position: center; background-size: 60%; }
-    .highest-price::after { background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24" fill="white"><path d="M440-160v-488L216-424l-56-56 320-320 320 320-56 56-224-224v488h-80Z"/></svg>'); }
-    .lowest-price::after { background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24" fill="white"><path d="M480-320 160-640l56-56 264 264 264-264 56 56-320 320Z"/></svg>'); }
-    .average-price::after { background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24" fill="white"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm80-80h400v-80H280v80Zm0-120h400v-80H280v80Zm0-120h400v-80H280v80Z"/></svg>'); }
-    .stat-box-title { font-size: 12px; color: #555; margin-bottom: 10px; font-weight: 500; }
-    .stat-value { font-size: 24px; font-weight: 600; color: #333; margin-bottom: 5px; }
-    .stat-label { font-size: 14px; color: #555; margin-bottom: 10px; font-weight: 500; }
-    .stat-indicator { font-size: 12px; color: #777; margin-top: 0; }
-    .stat-indicator.positive { color: #2ECC71; }
-    .stat-indicator.negative { color: #E74C3C; }
-    @media (max-width: 768px) { .chart-title-container { flex-direction: column; align-items: flex-start; gap: 10px; } .date-nav-container { width: 100%; justify-content: flex-end;} #priceStats { align-items: center; } .stat-box { max-width: 90%; width: 100%; margin-bottom: 15px; } .chart-container { height: 320px; min-width: 1000px; } }
-    @media (max-width: 480px) { .date-nav-button { padding: 4px 8px; font-size: 16px; } .date-display { padding: 5px 10px; font-size: 13px; } .chart-container { height: 300px; min-width: 1000px; } .chart-wrapper { padding: 15px; } .stat-box { padding: 15px; max-width: 100%; } .stat-value { font-size: 20px; } .stat-label { font-size: 12px; } }
+    #priceStats { 
+      display: flex; 
+      justify-content: space-around; 
+      margin-top: 20px; 
+      gap: 15px; 
+      flex-wrap: wrap; 
+      height: 100%; 
+    }
+    
+    .stat-box { 
+      flex: 1; 
+      min-width: 160px; 
+      max-width: 200px; 
+      padding: 20px; 
+      padding-right: 65px; /* Extra padding for icon space */
+      border-radius: 12px; 
+      text-align: left; 
+      background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+      border: 1px solid #e9ecef;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      transition: transform 0.2s ease, box-shadow 0.2s ease; 
+      position: relative; 
+      overflow: hidden;
+    }
+    
+    .stat-box:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    
+    /* Icon containers - positioned to not interfere with text */
+    .stat-box::before { 
+      content: ''; 
+      position: absolute; 
+      top: 15px; 
+      right: 15px; 
+      width: 40px; 
+      height: 40px; 
+      border-radius: 8px; 
+      background-repeat: no-repeat; 
+      background-position: center; 
+      background-size: 20px 20px; 
+      opacity: 0.9;
+      flex-shrink: 0; /* Prevent icon from shrinking */
+    }
+    
+    /* Highest Price - Red/Orange theme */
+    .highest-price::before { 
+      background-color: #ff6b6b; 
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline></svg>'); 
+    }
+    
+    /* Lowest Price - Green theme */
+    .lowest-price::before { 
+      background-color: #33b276; 
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 18 10.5 8.5 15.5 13.5 23 6"></polyline><polyline points="17 18 23 18 23 12"></polyline></svg>'); 
+    }
+    
+    /* Average Price - Blue theme */
+    .average-price::before { 
+      background-color: #1e22aa; 
+      background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18m-9-9v18"></path></svg>'); 
+    }
+    
+    /* Enhanced text styling with proper spacing */
+    .stat-box-title { 
+      font-size: 12px; 
+      color: #6c757d; 
+      margin-bottom: 8px; 
+      font-weight: 600; 
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      line-height: 1.3;
+      padding-right: 0; /* No additional padding needed due to container padding */
+      max-width: 100%; /* Ensure it doesn't exceed container width */
+      word-wrap: break-word; /* Allow long words to break */
+      hyphens: auto; /* Enable hyphenation for better text flow */
+    }
+    
+    .stat-value { 
+      font-size: 28px; 
+      font-weight: 700; 
+      color: #212529; 
+      margin-bottom: 4px; 
+      line-height: 1.1;
+      word-wrap: break-word;
+    }
+    
+    .stat-label { 
+      font-size: 13px; 
+      color: #495057; 
+      margin-bottom: 8px; 
+      font-weight: 500; 
+      line-height: 1.2;
+    }
+    
+    .stat-indicator { 
+      font-size: 11px; 
+      color: #6c757d; 
+      margin-top: 0; 
+      font-weight: 500;
+      line-height: 1.3;
+      word-wrap: break-word;
+    }
+    
+    .stat-indicator.positive { 
+      color: #51cf66; 
+    }
+    
+    .stat-indicator.negative { 
+      color: #ff6b6b; 
+    }
+    
+    /* Add subtle accent borders */
+    .highest-price {
+      border-left: 4px solid #ff6b6b;
+    }
+    
+    .lowest-price {
+      border-left: 4px solid #51cf66;
+    }
+    
+    .average-price {
+      border-left: 4px solid #4dabf7;
+    }
+    
+    /* Responsive adjustments for smaller screens */
+    @media (max-width: 768px) { 
+      .stat-box { 
+        padding: 15px; 
+        padding-right: 55px; /* Adjust for smaller screens */
+        max-width: 100%; 
+        width: 100%; 
+        margin-bottom: 15px; 
+      }
+      
+      .stat-box::before {
+        width: 35px;
+        height: 35px;
+        background-size: 18px 18px;
+      }
+      
+      .stat-value { 
+        font-size: 24px; 
+      }
+      
+      .stat-label { 
+        font-size: 12px; 
+      }
+    }
+    
+    @media (max-width: 480px) { 
+      .stat-box { 
+        padding: 12px; 
+        padding-right: 50px; /* Further adjust for mobile */
+      }
+      
+      .stat-box::before {
+        width: 32px;
+        height: 32px;
+        background-size: 16px 16px;
+        top: 12px;
+        right: 12px;
+      }
+      
+      .stat-value { 
+        font-size: 20px; 
+      }
+    }
 
     /* Loading State Styles */
     .chart-wrapper.loading .chart-container,
@@ -1514,6 +1753,20 @@ function initChart() {
           beginAtZero: true,
           grid: { color: colors.grid, drawBorder: false },
           border: { display: false },
+          title: {
+            display: true,
+            text: "Cent/kWh",
+            color: colors.text,
+            font: {
+              size: 14,
+              weight: 500,
+              family: "'Fira Sans', sans-serif",
+            },
+            padding: {
+              top: 0,
+              bottom: 10,
+            },
+          },
           ticks: {
             color: colors.text,
             font: tickFont,
@@ -1535,6 +1788,20 @@ function initChart() {
         x: {
           grid: { display: false },
           border: { display: false },
+          title: {
+            display: true,
+            text: "Stunden",
+            color: colors.text,
+            font: {
+              size: 14,
+              weight: 500,
+              family: "'Fira Sans', sans-serif",
+            },
+            padding: {
+              top: 10,
+              bottom: 0,
+            },
+          },
           ticks: {
             color: colors.text,
             font: tickFont,

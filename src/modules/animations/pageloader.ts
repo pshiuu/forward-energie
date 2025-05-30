@@ -2,7 +2,6 @@ import { animate } from "animejs";
 
 // IDs for easier targeting
 const LOADER_ID = "fw-page-loader";
-const GRADIENT_ID = "fw-loader-gradient";
 const LOGO_ID = "fw-loader-logo";
 const RINGS_CONTAINER_ID = "fw-loader-rings";
 const MIN_DISPLAY_TIME = 1750; // Minimum time to display the loader on initial page load (ms)
@@ -283,13 +282,17 @@ function hideLoader(): Promise<void> {
 function handleInitialPageLoad() {
   let pageLoaded = false;
   let timerElapsed = false;
+  let hardTimeoutElapsed = false;
 
   // Start the logo animation immediately
   startLogoAnimation();
 
-  // Check if both conditions are met to hide the loader
+  // Check if any condition is met to hide the loader
   function checkHideConditions() {
-    if (pageLoaded && timerElapsed && !initialLoadCompleted) {
+    if (
+      (pageLoaded && timerElapsed && !initialLoadCompleted) ||
+      hardTimeoutElapsed
+    ) {
       hideLoader();
       initialLoadCompleted = true;
     }
@@ -306,6 +309,20 @@ function handleInitialPageLoad() {
     pageLoaded = true;
     checkHideConditions();
   });
+
+  // Listen for pageshow (bfcache restore)
+  window.addEventListener("pageshow", (event) => {
+    if ((event as PageTransitionEvent).persisted) {
+      pageLoaded = true;
+      checkHideConditions();
+    }
+  });
+
+  // Hard timeout: forcibly hide loader after 5 seconds (safety net)
+  setTimeout(() => {
+    hardTimeoutElapsed = true;
+    checkHideConditions();
+  }, 5000);
 }
 
 /**
