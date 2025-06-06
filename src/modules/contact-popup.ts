@@ -51,8 +51,8 @@ export const contactPopup = () => {
       <style>
         .floating-contact-popup {
           position: fixed;
-          bottom: 30px;
-          left: 30px;
+          bottom: 1rem;
+          left: 1rem;
           z-index: 1000;
           font-family: inherit;
         }
