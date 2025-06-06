@@ -62,7 +62,7 @@ function createLoaderHTML() {
     // Style the rings
     Object.assign(ring.style, {
       position: "absolute",
-      border: "2px solid rgba(0, 151, 169, 0.4)", // Light blue border like the logo color
+      border: "2px solid rgba(2, 184, 8, 0.87)",
       borderRadius: "50%",
       width: "120px",
       height: "120px",
