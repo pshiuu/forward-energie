@@ -16,113 +16,54 @@ let transitionInProgress = false;
 let scrollPosition = 0; // Store scroll position when disabling scroll
 
 /**
- * Creates the loader HTML structure and appends it to the body.
+ * Adds only the essential CSS animations needed for the loader to work.
+ * Does not override Webflow styling.
  */
-function createLoaderHTML() {
-  // Prevent creating multiple loaders
-  if (document.getElementById(LOADER_ID)) return;
-
-  const loader = document.createElement("div");
-  loader.id = LOADER_ID;
-  // Basic styles for the loader container
-  Object.assign(loader.style, {
-    position: "fixed",
-    top: "0",
-    left: "0",
-    width: "100%",
-    height: "100%",
-    zIndex: "9999",
-    display: "flex", // Center content using flexbox
-    justifyContent: "center",
-    backgroundColor: "white",
-    alignItems: "center",
-    opacity: "1", // Start visible for initial page load
-    visibility: "visible", // Start visible for initial page load
-    pointerEvents: "auto", // Block interaction until page is ready
-    transition: "opacity 0.5s ease", // Smooth CSS transition for opacity
-    // The gradient will provide the background
-  });
-
-  // Create rings container for the ripple effect
-  const ringsContainer = document.createElement("div");
-  ringsContainer.id = RINGS_CONTAINER_ID;
-  Object.assign(ringsContainer.style, {
-    position: "absolute",
-    display: "flex",
-    opacity: "0.5",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: "2",
-  });
-
-  // Create the ripple rings
-  for (let i = 0; i < NUM_RINGS; i++) {
-    const ring = document.createElement("div");
-    ring.className = "fw-loader-ring";
-    // Style the rings
-    Object.assign(ring.style, {
-      position: "absolute",
-      border: "2px solid rgba(2, 184, 8, 0.87)",
-      borderRadius: "50%",
-      width: "120px",
-      height: "120px",
-      opacity: "0",
-      transform: "scale(0.8)", // Start smaller than the logo
-      transformOrigin: "center center",
-      willChange: "transform, opacity", // Hint for browser to optimize these properties
-      transition: "transform 0.5s ease, opacity 0.5s ease", // Smooth CSS transitions
-    });
-    ringsContainer.appendChild(ring);
+function addEssentialStyles() {
+  // Add CSS animation for the logo if not already present
+  if (!document.getElementById("loader-animations-style")) {
+    const styleSheet = document.createElement("style");
+    styleSheet.id = "loader-animations-style";
+    styleSheet.textContent = `
+      @keyframes logoScale {
+        0% {
+          transform: translate3d(0,0,0) scale(1);
+        }
+        100% {
+          transform: translate3d(0,0,0) scale(1.15);
+        }
+      }
+      
+      /* Add no-scroll class styles to prevent scrolling */
+      body.no-scroll {
+        overflow: hidden;
+        position: fixed;
+        width: 100%;
+        height: 100%;
+      }
+      
+      /* Essential animation styles for rings */
+      .fw-loader-ring {
+        position: absolute;
+        border: 2px solid rgba(2, 184, 8, 0.87);
+        border-radius: 50%;
+        width: 120px;
+        height: 120px;
+        opacity: 0;
+        transform: scale(0.8);
+        transform-origin: center center;
+        will-change: transform, opacity;
+      }
+      
+      /* Essential animation styles for logo */
+      .fw-loader-logo {
+        animation: logoScale .8s infinite alternate cubic-bezier(0.445, 0.05, 0.55, 0.95);
+        will-change: transform;
+        backface-visibility: hidden;
+      }
+    `;
+    document.head.appendChild(styleSheet);
   }
-
-  // Logo element
-  const logo = document.createElement("img");
-  logo.id = LOGO_ID;
-  logo.src =
-    "https://cdn.prod.website-files.com/67bf7aa1075d0a8aedc77401/67c803c318bca5d2cf63557a_logo-forward-energie.png";
-  logo.alt = "Loading...";
-  Object.assign(logo.style, {
-    maxWidth: "180px", // Adjust initial size as needed
-    maxHeight: "120px", // Adjust initial size as needed
-    position: "relative", // Position relative to the flex container
-    zIndex: "3", // Ensure logo is above the rings and gradient
-    transform: "translate3d(0,0,0) scale(1)", // Force GPU acceleration
-    willChange: "transform", // Hint for browser to optimize transform property
-    backfaceVisibility: "hidden", // Prevent flickering in some browsers
-    transition: "transform 0.8s cubic-bezier(0.445, 0.05, 0.55, 0.95)", // Smooth CSS transition
-    animation:
-      "logoScale .8s infinite alternate cubic-bezier(0.445, 0.05, 0.55, 0.95)", // CSS animation
-  });
-
-  // Add elements to the loader
-  loader.appendChild(ringsContainer);
-  loader.appendChild(logo);
-  document.body.appendChild(loader);
-
-  // Add CSS animation for the logo
-  const styleSheet = document.createElement("style");
-  styleSheet.textContent = `
-    @keyframes logoScale {
-      0% {
-        transform: translate3d(0,0,0) scale(1);
-      }
-      100% {
-        transform: translate3d(0,0,0) scale(1.15);
-      }
-    }
-    
-    /* Add no-scroll class styles to prevent scrolling */
-    body.no-scroll {
-      overflow: hidden;
-      position: fixed;
-      width: 100%;
-      height: 100%;
-    }
-  `;
-  document.head.appendChild(styleSheet);
-
-  // Initially disable scrolling since the loader starts visible
-  disableScroll();
 }
 
 /**
@@ -162,8 +103,19 @@ function enableScroll() {
  * Starts the pulsating animation for the logo.
  */
 function startLogoAnimation() {
-  const logoElement = document.getElementById(LOGO_ID);
-  if (!logoElement) return;
+  let logoElement = document.getElementById(LOGO_ID);
+
+  // If logo not found by ID, try by class
+  if (!logoElement) {
+    logoElement = document.querySelector(".fw-loader-logo") as HTMLElement;
+  }
+
+  if (!logoElement) {
+    console.warn(
+      "Logo element not found. Make sure to create it in Webflow with ID 'fw-loader-logo' or class 'fw-loader-logo'."
+    );
+    return;
+  }
 
   // The logo animation is now handled by CSS animation
   // Start only the ripple animation with anime.js
@@ -175,7 +127,12 @@ function startLogoAnimation() {
  */
 function startRippleAnimation() {
   const rings = document.querySelectorAll(".fw-loader-ring");
-  if (!rings.length) return;
+  if (!rings.length) {
+    console.warn(
+      "Ring elements not found. Make sure to create them in Webflow with class 'fw-loader-ring'."
+    );
+    return;
+  }
 
   // If animation exists, stop it to prevent stacking animations
   if (ringsAnimation) {
@@ -227,7 +184,7 @@ function showLoader(): Promise<void> {
     // Set flag that transition is in progress
     transitionInProgress = true;
 
-    // Use CSS transitions instead of anime.js for smoother fade
+    // Use CSS transitions for smooth fade
     loaderElement.style.visibility = "visible";
     loaderElement.style.pointerEvents = "auto";
 
@@ -236,10 +193,10 @@ function showLoader(): Promise<void> {
       loaderElement.style.opacity = "1";
       startLogoAnimation(); // Start pulsing
 
-      // Wait for transition to complete (match the CSS transition duration)
+      // Wait for transition to complete
       setTimeout(() => {
         resolve();
-      }, 500); // Match the transition time from CSS
+      }, 500);
     }, 10);
   });
 }
@@ -261,7 +218,7 @@ function hideLoader(): Promise<void> {
     loaderElement.style.opacity = "0";
     loaderElement.style.pointerEvents = "none";
 
-    // Wait for transition to complete (match the CSS transition duration)
+    // Wait for transition to complete
     setTimeout(() => {
       loaderElement.style.visibility = "hidden";
       stopLogoAnimation();
@@ -271,7 +228,7 @@ function hideLoader(): Promise<void> {
       enableScroll();
 
       resolve();
-    }, 500); // Match the transition time from CSS
+    }, 500);
   });
 }
 
@@ -284,8 +241,8 @@ function handleInitialPageLoad() {
   let timerElapsed = false;
   let hardTimeoutElapsed = false;
 
-  // Start the logo animation immediately
-  startLogoAnimation();
+  // Show the loader for initial page load
+  showLoader();
 
   // Check if any condition is met to hide the loader
   function checkHideConditions() {
@@ -354,8 +311,8 @@ async function handlePageTransition(callback: Function) {
  * This is the main function to call in your app.
  */
 export function initPageLoader() {
-  // Create the loader HTML
-  createLoaderHTML();
+  // Add essential CSS animations
+  addEssentialStyles();
 
   // Handle initial page load
   handleInitialPageLoad();
@@ -399,9 +356,8 @@ export function initPageLoader() {
 // Also export the individual functions for more granular control if needed
 export { showLoader, hideLoader };
 
-// Auto-initialize the loader for immediate display on script load
+// Auto-initialize only the essential styles, don't override Webflow
 if (typeof window !== "undefined") {
-  // Only run in browser environment, not during SSR
-  createLoaderHTML();
-  startLogoAnimation();
+  // Only add essential CSS styles
+  addEssentialStyles();
 }

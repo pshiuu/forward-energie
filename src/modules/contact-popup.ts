@@ -8,6 +8,47 @@ declare global {
 }
 
 export const contactPopup = () => {
+  // Global Calendly opener function
+  const openCalendly = (url?: string) => {
+    const calendlyUrl = url || "https://calendly.com/lulzim-1/30min";
+
+    if (window.Calendly) {
+      window.Calendly.initPopupWidget({ url: calendlyUrl });
+    } else {
+      console.warn(
+        "Calendly is not loaded yet. Please ensure Calendly script is included."
+      );
+      // Fallback: Open in new tab
+      window.open(calendlyUrl, "_blank");
+    }
+  };
+
+  // Global event listener for Calendly triggers
+  const initGlobalCalendlyTriggers = () => {
+    // Listen for clicks on elements with 'calendly-trigger' class
+    document.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement;
+      const calendlyButton = target.closest(
+        ".calendly-trigger, .open-calendly, [data-calendly]"
+      );
+
+      if (calendlyButton) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Get custom URL if specified
+        const customUrl = calendlyButton.getAttribute("data-calendly-url");
+        openCalendly(customUrl);
+
+        // Add visual feedback
+        calendlyButton.classList.add("calendly-loading");
+        setTimeout(() => {
+          calendlyButton.classList.remove("calendly-loading");
+        }, 1000);
+      }
+    });
+  };
+
   // Create the main contact popup container
   const createContactPopup = () => {
     const popup = document.createElement("div");
@@ -319,6 +360,45 @@ export const contactPopup = () => {
         .main-contact-button {
           animation: pulse 3s infinite;
         }
+
+        /* Global Calendly trigger styles */
+        .calendly-trigger,
+        .open-calendly,
+        [data-calendly] {
+          cursor: pointer;
+          transition: all 0.3s ease;
+          position: relative;
+        }
+
+        .calendly-trigger:hover,
+        .open-calendly:hover,
+        [data-calendly]:hover {
+          transform: translateY(-1px);
+        }
+
+        .calendly-loading {
+          pointer-events: none;
+          opacity: 0.7;
+        }
+
+        .calendly-loading::after {
+          content: '';
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          width: 20px;
+          height: 20px;
+          margin: -10px 0 0 -10px;
+          border: 2px solid #f3f3f3;
+          border-top: 2px solid #3498db;
+          border-radius: 50%;
+          animation: calendly-spin 1s linear infinite;
+        }
+
+        @keyframes calendly-spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
       </style>
     `;
 
@@ -337,7 +417,6 @@ export const contactPopup = () => {
     // Add event listeners
     const container = popup.querySelector(".contact-popup-container");
     const mainButton = popup.querySelector(".main-contact-button");
-    const calendlyTrigger = popup.querySelector(".calendly-trigger");
 
     // Handle mobile/tablet click behavior
     let isExpanded = false;
@@ -362,21 +441,6 @@ export const contactPopup = () => {
       e.preventDefault();
       toggleExpanded(e);
     });
-
-    // Handle Calendly integration
-    if (calendlyTrigger && window.Calendly) {
-      calendlyTrigger.addEventListener("click", (e) => {
-        e.preventDefault();
-        window.Calendly?.initPopupWidget({
-          url: "https://calendly.com/lulzim-1/30min",
-        });
-        // Close the popup after opening Calendly
-        if (window.innerWidth <= 768) {
-          isExpanded = false;
-          container?.classList.remove("expanded");
-        }
-      });
-    }
 
     // Close expanded state when clicking outside or on overlay
     document.addEventListener("click", (e) => {
@@ -413,8 +477,15 @@ export const contactPopup = () => {
 
   // Initialize when DOM is ready
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initContactPopup);
+    document.addEventListener("DOMContentLoaded", () => {
+      initContactPopup();
+      initGlobalCalendlyTriggers();
+    });
   } else {
     initContactPopup();
+    initGlobalCalendlyTriggers();
   }
+
+  // Export the openCalendly function for manual use
+  (window as any).openCalendly = openCalendly;
 };

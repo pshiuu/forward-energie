@@ -165,8 +165,18 @@ function setupWizedIntegration() {
           clearTimeout(loadingTimeout); // Clear timeout when watcher triggers
 
           if (!newData) {
-            console.log("Watcher received null/undefined data.");
-            handleNoDataForDate();
+            console.log(
+              "Watcher received null/undefined data, waiting before showing error..."
+            );
+            // Add delay to prevent race conditions - only show error if still no data after delay
+            setTimeout(() => {
+              if (!Wized.data?.r?.XLMtoJSON?.data) {
+                console.log("Still no data after delay, showing error");
+                handleNoDataForDate();
+              } else {
+                console.log("Data appeared after delay, continuing");
+              }
+            }, 2000); // Wait 2 seconds
             return;
           }
 
@@ -200,7 +210,7 @@ function setupWizedIntegration() {
       loadingTimeout = setTimeout(() => {
         if (document.body.classList.contains("chart-loading")) {
           console.warn(
-            `API request timeout after 15 seconds (attempt ${requestAttempts})`
+            `API request timeout after 30 seconds (attempt ${requestAttempts})`
           );
           if (requestAttempts < maxRetries) {
             console.log(
@@ -215,7 +225,7 @@ function setupWizedIntegration() {
             handleNoDataForDate();
           }
         }
-      }, 15000);
+      }, 30000);
     }
 
     // Function to execute the data request with retry logic
@@ -711,11 +721,11 @@ function handleDateChange(newDate: Date, Wized: any) {
   // Set a timeout for the API request to prevent hanging
   const requestTimeout = setTimeout(() => {
     if (document.body.classList.contains("chart-loading")) {
-      console.warn("Request timeout after 15 seconds - showing fallback");
+      console.warn("Request timeout after 30 seconds - showing fallback");
       hideLoadingState();
       handleNoDataForDate();
     }
-  }, 15000);
+  }, 30000);
 
   // Pass Wized object to updateWizedVariables
   const variablesChanged = updateWizedVariables(periodStart, periodEnd, Wized);
@@ -908,18 +918,13 @@ function updateWizedVariables(
 
 // Check if data is valid
 function isValidChartData(data: any): boolean {
-  return (
-    data &&
-    data.timeSeries &&
-    Array.isArray(data.timeSeries) &&
-    data.timeSeries.length > 0 &&
-    data.timeSeries[0].periods &&
-    Array.isArray(data.timeSeries[0].periods) &&
-    data.timeSeries[0].periods.length > 0 &&
-    data.timeSeries[0].periods[0].points &&
-    Array.isArray(data.timeSeries[0].periods[0].points) &&
-    data.timeSeries[0].periods[0].points.length > 0
-  );
+  try {
+    // More resilient validation - check the essential path exists
+    return !!(data?.timeSeries?.[0]?.periods?.[0]?.points?.length > 0);
+  } catch (error) {
+    console.warn("Data validation error:", error, data);
+    return false;
+  }
 }
 
 // Check if new data is different from the last processed data
@@ -989,7 +994,17 @@ function convertMWhToCentsPerKWh(mwhPrice: number): number {
 function updateChartWithWizedData(data: any) {
   // Check if data is valid *before* hiding loading, in case we need to show "no data"
   if (!isValidChartData(data)) {
-    console.warn("Invalid data for chart update called with:", data);
+    console.error("CRITICAL: Invalid data for chart update");
+    console.error("Data structure:", {
+      hasData: !!data,
+      hasTimeSeries: !!data?.timeSeries,
+      timeSeriesLength: data?.timeSeries?.length,
+      hasPeriods: !!data?.timeSeries?.[0]?.periods,
+      periodsLength: data?.timeSeries?.[0]?.periods?.length,
+      hasPoints: !!data?.timeSeries?.[0]?.periods?.[0]?.points,
+      pointsLength: data?.timeSeries?.[0]?.periods?.[0]?.points?.length,
+    });
+    console.error("Full data object:", data);
     handleNoDataForDate(); // This will call hideLoadingState
     return;
   }
@@ -1010,7 +1025,10 @@ function updateChartWithWizedData(data: any) {
 
     // Ensure points is an array and has length
     if (!Array.isArray(points) || points.length === 0) {
-      console.warn("No points data found in the period.");
+      console.error("CRITICAL: No points data found in the period");
+      console.error("Points type:", typeof points);
+      console.error("Points value:", points);
+      console.error("Period structure:", period);
       handleNoDataForDate(); // This will call hideLoadingState (redundant, but safe)
       return;
     }
@@ -1049,7 +1067,15 @@ function updateChartWithWizedData(data: any) {
 
     // Check if prices array is valid after processing
     if (validPriceCount === 0) {
-      console.warn("Processed prices resulted in empty or invalid array.");
+      console.error(
+        "CRITICAL: Processed prices resulted in empty or invalid array"
+      );
+      console.error("Points data sample:", points.slice(0, 3));
+      console.error(
+        "Processed prices sample:",
+        pricesInCentsPerKWh.slice(0, 3)
+      );
+      console.error("Valid price count:", validPriceCount);
       handleNoDataForDate();
       return;
     }
@@ -1109,16 +1135,44 @@ function updateChartWithWizedData(data: any) {
 
     console.log("Chart updated successfully.");
   } catch (error) {
-    console.error("Error updating chart:", error, data);
+    console.error("CRITICAL: Error updating chart:", error);
+    console.error(
+      "Error stack:",
+      error instanceof Error ? error.stack : "No stack trace"
+    );
+    console.error("Data that caused error:", data);
+    console.error("Chart state:", {
+      exists: !!priceChart,
+      hasLabels: !!priceChart?.data?.labels,
+      hasDatasets: !!priceChart?.data?.datasets?.[0],
+    });
     handleNoDataForDate(); // This will call hideLoadingState
   }
 }
 
 // Handle cases where no data is available for the selected date OR request fails
 function handleNoDataForDate() {
-  console.log(
-    `Handling no data/error for date: ${formatDate(currentSelectedDate)}`
+  console.error(
+    `CRITICAL: No data shown for date: ${formatDate(currentSelectedDate)}`
   );
+  console.error("Current Wized state:", window.Wized?.data?.r?.XLMtoJSON);
+  console.error(
+    "Loading state:",
+    document.body.classList.contains("chart-loading")
+  );
+  console.error("Current timestamp:", new Date().toISOString());
+
+  // Check if we can manually fetch the data as fallback
+  if (window.Wized?.data?.r?.XLMtoJSON?.data) {
+    console.warn("Data exists but validation failed, trying to process anyway");
+    try {
+      updateChartWithWizedData(window.Wized.data.r.XLMtoJSON.data);
+      return; // Exit early if fallback worked
+    } catch (error) {
+      console.error("Fallback data processing failed:", error);
+    }
+  }
+
   if (priceChart) {
     priceChart.data.labels = [];
     priceChart.data.datasets[0].data = [];
