@@ -25,14 +25,6 @@ function addEssentialStyles() {
     const styleSheet = document.createElement("style");
     styleSheet.id = "loader-animations-style";
     styleSheet.textContent = `
-      @keyframes logoScale {
-        0% {
-          transform: translate3d(0,0,0) scale(1);
-        }
-        100% {
-          transform: translate3d(0,0,0) scale(1.15);
-        }
-      }
       
       /* Add no-scroll class styles to prevent scrolling */
       body.no-scroll {
@@ -55,12 +47,6 @@ function addEssentialStyles() {
         will-change: transform, opacity;
       }
       
-      /* Essential animation styles for logo */
-      .fw-loader-logo {
-        animation: logoScale .8s infinite alternate cubic-bezier(0.445, 0.05, 0.55, 0.95);
-        will-change: transform;
-        backface-visibility: hidden;
-      }
     `;
     document.head.appendChild(styleSheet);
   }
