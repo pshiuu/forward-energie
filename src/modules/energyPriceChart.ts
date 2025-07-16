@@ -212,66 +212,78 @@ function setupWizedIntegration() {
     // CRITICAL FIX: Setup the watcher FIRST, before making any requests
     if (Wized.reactivity && Wized.reactivity.watch) {
       console.log("Setting up Wized data watcher...");
+
+      // Add debouncing to prevent rapid fire updates
+      let watcherTimeout: any;
+
       Wized.reactivity.watch(
         () => Wized.data?.r?.XLMtoJSON?.data,
         (newData: any, oldData: any) => {
-          console.log("=== WIZED DATA WATCHER TRIGGERED ===");
-          console.log("New data exists:", !!newData);
-          console.log("Old data exists:", !!oldData);
-          console.log("Data path check:", {
-            hasWizedData: !!Wized.data,
-            hasR: !!Wized.data?.r,
-            hasXLMtoJSON: !!Wized.data?.r?.XLMtoJSON,
-            hasData: !!Wized.data?.r?.XLMtoJSON?.data,
-          });
+          // Clear any existing timeout to debounce rapid updates
+          clearTimeout(watcherTimeout);
 
-          clearTimeout(loadingTimeout); // Clear timeout when watcher triggers
-
-          if (!newData) {
-            console.log(
-              "Watcher received null/undefined data, waiting before showing error..."
-            );
-            // Add delay to prevent race conditions - only show error if still no data after delay
-            setTimeout(() => {
-              if (!Wized.data?.r?.XLMtoJSON?.data) {
-                console.log("Still no data after delay, showing error");
-                handleNoDataForDate();
-              } else {
-                console.log("Data appeared after delay, continuing");
-              }
-            }, 2000); // Wait 2 seconds
-            return;
-          }
-
-          console.time("chartDataProcessing");
-          if (isValidChartData(newData) && !isDataUnchanged(newData, oldData)) {
-            console.log(
-              "Watcher received valid & changed data, updating chart."
-            );
-            console.log("Data structure preview:", {
-              timeSeriesCount: newData?.timeSeries?.length,
-              firstPeriodStart:
-                newData?.timeSeries?.[0]?.periods?.[0]?.timeInterval?.start,
-              pointsCount:
-                newData?.timeSeries?.[0]?.periods?.[0]?.points?.length,
+          watcherTimeout = setTimeout(() => {
+            console.log("=== WIZED DATA WATCHER TRIGGERED ===");
+            console.log("New data exists:", !!newData);
+            console.log("Old data exists:", !!oldData);
+            console.log("Data path check:", {
+              hasWizedData: !!Wized.data,
+              hasR: !!Wized.data?.r,
+              hasXLMtoJSON: !!Wized.data?.r?.XLMtoJSON,
+              hasData: !!Wized.data?.r?.XLMtoJSON?.data,
             });
-            updateChartWithWizedData(newData);
-          } else if (!isValidChartData(newData)) {
-            console.log("Watcher received invalid data structure.");
-            console.log("Invalid data details:", {
-              type: typeof newData,
-              keys: newData ? Object.keys(newData) : "N/A",
-              stringify: JSON.stringify(newData).substring(0, 200) + "...",
-            });
-            handleNoDataForDate();
-          } else {
-            console.log(
-              "Wized data watcher: Data is valid but unchanged, hiding loading."
-            );
-            // Ensure loading is hidden if data comes back but is the same
-            hideLoadingState();
-          }
-          console.timeEnd("chartDataProcessing");
+
+            clearTimeout(loadingTimeout); // Clear timeout when watcher triggers
+
+            if (!newData) {
+              console.log(
+                "Watcher received null/undefined data, waiting before showing error..."
+              );
+              // Add delay to prevent race conditions - only show error if still no data after delay
+              setTimeout(() => {
+                if (!Wized.data?.r?.XLMtoJSON?.data) {
+                  console.log("Still no data after delay, showing error");
+                  handleNoDataForDate();
+                } else {
+                  console.log("Data appeared after delay, continuing");
+                }
+              }, 2000); // Wait 2 seconds
+              return;
+            }
+
+            console.time("chartDataProcessing");
+            if (
+              isValidChartData(newData) &&
+              !isDataUnchanged(newData, oldData)
+            ) {
+              console.log(
+                "Watcher received valid & changed data, updating chart."
+              );
+              console.log("Data structure preview:", {
+                timeSeriesCount: newData?.timeSeries?.length,
+                firstPeriodStart:
+                  newData?.timeSeries?.[0]?.periods?.[0]?.timeInterval?.start,
+                pointsCount:
+                  newData?.timeSeries?.[0]?.periods?.[0]?.points?.length,
+              });
+              updateChartWithWizedData(newData);
+            } else if (!isValidChartData(newData)) {
+              console.log("Watcher received invalid data structure.");
+              console.log("Invalid data details:", {
+                type: typeof newData,
+                keys: newData ? Object.keys(newData) : "N/A",
+                stringify: JSON.stringify(newData).substring(0, 200) + "...",
+              });
+              handleNoDataForDate();
+            } else {
+              console.log(
+                "Wized data watcher: Data is valid but unchanged, hiding loading."
+              );
+              // Ensure loading is hidden if data comes back but is the same
+              hideLoadingState();
+            }
+            console.timeEnd("chartDataProcessing");
+          }, 100); // 100ms debounce delay
         },
         { deep: true }
       );
@@ -1065,92 +1077,55 @@ function updateWizedVariables(
 // Check if data is valid
 function isValidChartData(data: any): boolean {
   try {
-    console.log("=== VALIDATING CHART DATA ===");
-    console.log("Data type:", typeof data);
-    console.log("Data exists:", !!data);
-
-    if (!data) {
-      console.log("Validation failed: Data is null/undefined");
-      return false;
-    }
-
-    console.log("Data keys:", Object.keys(data));
-    console.log("Has timeSeries:", !!data.timeSeries);
-    console.log("TimeSeries type:", typeof data.timeSeries);
-    console.log(
-      "TimeSeries length:",
-      data.timeSeries ? data.timeSeries.length : "N/A"
-    );
-
+    // Quick initial checks
     if (
+      !data ||
       !data.timeSeries ||
       !Array.isArray(data.timeSeries) ||
       data.timeSeries.length === 0
     ) {
-      console.log("Validation failed: No timeSeries array or empty");
+      console.log("Validation failed: No valid timeSeries array");
       return false;
     }
 
     const firstTimeSeries = data.timeSeries[0];
-    console.log("First timeSeries keys:", Object.keys(firstTimeSeries));
-    console.log("Has periods:", !!firstTimeSeries.periods);
-    console.log("Periods type:", typeof firstTimeSeries.periods);
-    console.log(
-      "Periods length:",
-      firstTimeSeries.periods ? firstTimeSeries.periods.length : "N/A"
-    );
-
     if (
       !firstTimeSeries.periods ||
       !Array.isArray(firstTimeSeries.periods) ||
       firstTimeSeries.periods.length === 0
     ) {
-      console.log("Validation failed: No periods array or empty");
+      console.log("Validation failed: No valid periods array");
       return false;
     }
 
     const firstPeriod = firstTimeSeries.periods[0];
-    console.log("First period keys:", Object.keys(firstPeriod));
-    console.log("Has points:", !!firstPeriod.points);
-    console.log("Points type:", typeof firstPeriod.points);
-    console.log(
-      "Points length:",
-      firstPeriod.points ? firstPeriod.points.length : "N/A"
-    );
-
     if (
       !firstPeriod.points ||
       !Array.isArray(firstPeriod.points) ||
       firstPeriod.points.length === 0
     ) {
-      console.log("Validation failed: No points array or empty");
+      console.log("Validation failed: No valid points array");
       return false;
     }
 
-    // Sample first few points for validation
-    const samplePoints = firstPeriod.points.slice(0, 3);
-    console.log("Sample points:", samplePoints);
-
-    // Validate point structure
-    for (let i = 0; i < Math.min(3, firstPeriod.points.length); i++) {
-      const point = firstPeriod.points[i];
-      if (
-        !point ||
-        typeof point.position !== "number" ||
-        typeof point.price !== "number"
-      ) {
-        console.log(
-          `Validation failed: Invalid point structure at index ${i}:`,
-          point
-        );
-        return false;
-      }
+    // Quick validation of first point structure
+    const firstPoint = firstPeriod.points[0];
+    if (
+      !firstPoint ||
+      typeof firstPoint.position !== "number" ||
+      typeof firstPoint.price !== "number"
+    ) {
+      console.log("Validation failed: Invalid point structure:", firstPoint);
+      return false;
     }
 
-    console.log("Validation successful: Data structure is valid");
+    // Only log detailed info when there are issues or in verbose mode
+    console.log(
+      `Validation successful: ${firstPeriod.points.length} data points available`
+    );
     return true;
   } catch (error) {
-    console.warn("Data validation error:", error, data);
+    console.warn("Data validation error:", error);
     return false;
   }
 }
