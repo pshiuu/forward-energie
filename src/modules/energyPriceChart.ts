@@ -324,8 +324,17 @@ function setupWizedIntegration() {
               isValidChartData(newData) &&
               !isDataUnchanged(newData, oldData)
             ) {
+              // CRITICAL: Validate that the data matches our currently selected date
+              if (!isDataForSelectedDate(newData, currentSelectedDate)) {
+                console.warn("Watcher received data for wrong date, ignoring");
+                console.warn("Data date range:", getDataDateRange(newData));
+                console.warn("Expected date:", formatDate(currentSelectedDate));
+                lastProcessedDataHash = null; // Don't store hash for wrong date data
+                return;
+              }
+
               console.log(
-                "Watcher received valid & changed data, updating chart."
+                "Watcher received valid & changed data for correct date, updating chart."
               );
               console.log("Data structure preview:", {
                 timeSeriesCount: newData?.timeSeries?.length,
@@ -502,14 +511,28 @@ function setupWizedIntegration() {
     // 3. Check if data already exists before making a request
     console.log("Checking for existing data...");
     const existingData = Wized.data?.r?.XLMtoJSON?.data;
+    const isExistingDataValid = existingData && isValidChartData(existingData);
+    const isExistingDataForToday =
+      existingData && isDataForSelectedDate(existingData, currentSelectedDate);
+
     console.log("Existing data check:", {
       hasExistingData: !!existingData,
-      isValid: existingData ? isValidChartData(existingData) : false,
+      isValid: isExistingDataValid,
+      isForSelectedDate: isExistingDataForToday,
+      dataDateRange: existingData ? getDataDateRange(existingData) : "N/A",
+      selectedDate: formatDate(currentSelectedDate),
     });
-    if (existingData && isValidChartData(existingData)) {
-      console.log("Found existing valid data, using it instead of new request");
+
+    if (isExistingDataValid && isExistingDataForToday) {
+      console.log(
+        "Found existing valid data for correct date, using it instead of new request"
+      );
       updateChartWithWizedData(existingData);
       return;
+    } else if (isExistingDataValid && !isExistingDataForToday) {
+      console.log(
+        "Found existing data but for wrong date, will make new request"
+      );
     }
 
     // 4. Start the initial data request with retry capability
@@ -1213,6 +1236,66 @@ function isValidChartData(data: any): boolean {
   } catch (error) {
     console.warn("Data validation error:", error);
     return false;
+  }
+}
+
+// Validate that data is for the selected date
+function isDataForSelectedDate(data: any, selectedDate: Date): boolean {
+  try {
+    if (!data?.timeSeries?.[0]?.periods?.[0]?.timeInterval?.start) {
+      console.warn("No start time found in data");
+      return false;
+    }
+
+    const dataStartTime = data.timeSeries[0].periods[0].timeInterval.start;
+    console.log("Validating data start time:", dataStartTime);
+
+    // Parse the API start time (e.g., "2025-07-15T22:00Z")
+    const dataStartDate = new Date(dataStartTime);
+
+    // Convert to German time to compare with our selected date
+    const dataStartGerman = convertToGermanTime(dataStartDate);
+
+    // Get the date part only (ignore time) for both dates
+    const dataDateString = dataStartGerman.toISOString().substring(0, 10);
+    const selectedDateString = selectedDate.toISOString().substring(0, 10);
+
+    console.log("Date validation:", {
+      dataStartTime,
+      dataStartGerman: dataStartGerman.toISOString(),
+      dataDateString,
+      selectedDateString,
+      matches: dataDateString === selectedDateString,
+    });
+
+    return dataDateString === selectedDateString;
+  } catch (error) {
+    console.error("Error validating data date:", error);
+    return false;
+  }
+}
+
+// Get readable date range from data for logging
+function getDataDateRange(data: any): string {
+  try {
+    if (!data?.timeSeries?.[0]?.periods?.[0]?.timeInterval) {
+      return "Unknown date range";
+    }
+
+    const timeInterval = data.timeSeries[0].periods[0].timeInterval;
+    const startTime = timeInterval.start;
+    const endTime = timeInterval.end;
+
+    if (startTime) {
+      const startDate = new Date(startTime);
+      const startGerman = convertToGermanTime(startDate);
+      return `${formatDate(startGerman)} (${startTime})`;
+    }
+
+    return startTime || "No start time";
+  } catch (error) {
+    console.error("Error getting data date range:", error);
+    return "Error parsing date range";
   }
 }
 
