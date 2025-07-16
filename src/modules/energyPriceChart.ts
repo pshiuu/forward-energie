@@ -579,11 +579,13 @@ function setupDateNavigation() {
   datePickerInput.id = "datePickerInput";
   datePickerInput.className = "date-picker-input";
 
-  // Set max date to today (in German time) to prevent selecting future dates
+  // Set max date to tomorrow (in German time) to allow one day advance
   const today = getGermanToday();
-  const year = today.getUTCFullYear();
-  const month = String(today.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(today.getUTCDate()).padStart(2, "0");
+  const tomorrow = new Date(today);
+  tomorrow.setUTCDate(today.getUTCDate() + 1);
+  const year = tomorrow.getUTCFullYear();
+  const month = String(tomorrow.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(tomorrow.getUTCDate()).padStart(2, "0");
   datePickerInput.max = `${year}-${month}-${day}`;
 
   // Position it absolutely but make it accessible for click/focus events
@@ -778,11 +780,13 @@ function handleDatePickerChange(event: Event) {
     selectedDate.toISOString()
   );
 
-  // Ensure date is valid and not in the future (in German time)
+  // Ensure date is valid and not more than one day in the future (in German time)
   const today = getGermanToday();
+  const tomorrow = new Date(today);
+  tomorrow.setUTCDate(today.getUTCDate() + 1);
 
-  if (selectedDate.getTime() > today.getTime()) {
-    console.log("Cannot select future date");
+  if (selectedDate.getTime() > tomorrow.getTime()) {
+    console.log("Cannot select date beyond tomorrow");
     closeDatePicker();
     return;
   }
@@ -823,6 +827,8 @@ function navigateDays(days: number) {
   const today = getGermanToday();
   const tomorrow = new Date(today);
   tomorrow.setUTCDate(today.getUTCDate() + 1);
+  const dayAfterTomorrow = new Date(tomorrow);
+  dayAfterTomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
 
   // Use German time for all logging to help with debugging
   console.log(
@@ -846,9 +852,9 @@ function navigateDays(days: number) {
     tomorrow.toISOString()
   );
 
-  if (newDate >= tomorrow) {
-    // Use >= to prevent navigating *to* tomorrow
-    console.log("Cannot navigate to tomorrow or later.");
+  if (newDate >= dayAfterTomorrow) {
+    // Use >= to prevent navigating *beyond* tomorrow
+    console.log("Cannot navigate beyond tomorrow.");
     return;
   }
 
@@ -869,7 +875,7 @@ function navigateDays(days: number) {
   }
 }
 
-// Update next button state (hidden if date is today, disabled if loading)
+// Update next button state (hidden if date is tomorrow, disabled if loading)
 function updateNextButtonState() {
   const nextButton = document.querySelector(
     "#nextDayButton"
@@ -884,23 +890,30 @@ function updateNextButtonState() {
   }
 
   const today = getGermanToday();
+  const tomorrow = new Date(today);
+  tomorrow.setUTCDate(today.getUTCDate() + 1);
   const selectedDay = new Date(currentSelectedDate);
 
   // Compare dates using time strings to avoid timezone issues
   const isToday =
     selectedDay.toISOString().substring(0, 10) ===
     today.toISOString().substring(0, 10);
+  const isTomorrow =
+    selectedDay.toISOString().substring(0, 10) ===
+    tomorrow.toISOString().substring(0, 10);
   const isLoading = document.body.classList.contains("chart-loading");
 
   console.log("Updating button states:", {
     isToday,
+    isTomorrow,
     isLoading,
     selectedDate: formatDate(selectedDay),
     today: formatDate(today),
+    tomorrow: formatDate(tomorrow),
   });
 
-  // Next button: hide on today, disable when loading
-  if (isToday) {
+  // Next button: hide on tomorrow, disable when loading
+  if (isTomorrow) {
     nextButton.style.display = "none";
   } else {
     nextButton.style.display = "inline-flex";
