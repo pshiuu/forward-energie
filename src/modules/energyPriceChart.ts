@@ -1,12 +1,32 @@
 import { onReady } from "@xatom/core";
 import Chart, { ChartConfiguration, FontSpec } from "chart.js/auto"; // Import ChartConfiguration and FontSpec
 
+// Prevent any accidental page reloads
+const originalReload = window.location.reload;
+window.location.reload = function (forcedReload?: boolean) {
+  console.warn("⚠️ Page reload attempted - this may be unintentional!");
+  console.trace("Reload call stack:");
+  // Allow reload only if explicitly confirmed or called with a special flag
+  if (
+    forcedReload === true ||
+    window.confirm(
+      "Are you sure you want to reload the page? This will reset the chart data."
+    )
+  ) {
+    originalReload.call(window.location, forcedReload);
+  }
+};
+
 // Store chart instance globally
 let priceChart: Chart | null = null;
 // Store the currently selected date, always in German time (CET/CEST)
 let currentSelectedDate: Date = convertToGermanTime(new Date());
 // Prevent redundant Wized updates
 let lastWizedUpdateSignature: string | null = null;
+// Add initialization guards to prevent multiple setups
+let isChartInitialized = false;
+let isWizedIntegrationSetup = false;
+let activeDataRequest: Promise<any> | null = null;
 
 // Add Chart.js type to window object
 declare global {
@@ -80,7 +100,22 @@ function getGermanToday(): Date {
 }
 
 export function initEnergyPriceChart() {
+  // Prevent multiple initializations
+  if (isChartInitialized) {
+    console.log("Chart already initialized, skipping...");
+    return;
+  }
+
   onReady(() => {
+    // Double-check in case multiple onReady calls happened
+    if (isChartInitialized) {
+      console.log("Chart initialization already in progress or completed");
+      return;
+    }
+
+    isChartInitialized = true;
+    console.log("🔋 Energy Price Chart - Starting initialization");
+
     injectStyles();
     setupDateNavigation(); // Setup UI first
 
@@ -138,6 +173,14 @@ function waitForWizedAndSetup() {
 
 // Setup Wized Integration
 function setupWizedIntegration() {
+  // Prevent multiple Wized integrations
+  if (isWizedIntegrationSetup) {
+    console.log("Wized integration already setup, skipping...");
+    return;
+  }
+
+  isWizedIntegrationSetup = true;
+
   window.Wized = window.Wized || [];
   window.Wized.push((Wized: any) => {
     console.log("=== WIZED INTEGRATION STARTING ===");
@@ -215,6 +258,7 @@ function setupWizedIntegration() {
 
       // Add debouncing to prevent rapid fire updates
       let watcherTimeout: any;
+      let lastProcessedDataHash: string | null = null;
 
       Wized.reactivity.watch(
         () => Wized.data?.r?.XLMtoJSON?.data,
@@ -226,6 +270,28 @@ function setupWizedIntegration() {
             console.log("=== WIZED DATA WATCHER TRIGGERED ===");
             console.log("New data exists:", !!newData);
             console.log("Old data exists:", !!oldData);
+
+            // Create a simple hash to detect if this is truly new data
+            const dataHash = newData
+              ? JSON.stringify({
+                  timeSeriesCount: newData?.timeSeries?.length,
+                  firstPeriodStart:
+                    newData?.timeSeries?.[0]?.periods?.[0]?.timeInterval?.start,
+                  pointsCount:
+                    newData?.timeSeries?.[0]?.periods?.[0]?.points?.length,
+                  firstPoints:
+                    newData?.timeSeries?.[0]?.periods?.[0]?.points?.slice(0, 3),
+                })
+              : null;
+
+            // Skip processing if we've already processed this exact data
+            if (dataHash === lastProcessedDataHash) {
+              console.log(
+                "Data hash matches last processed, skipping redundant update"
+              );
+              return;
+            }
+
             console.log("Data path check:", {
               hasWizedData: !!Wized.data,
               hasR: !!Wized.data?.r,
@@ -239,6 +305,8 @@ function setupWizedIntegration() {
               console.log(
                 "Watcher received null/undefined data, waiting before showing error..."
               );
+              // Reset hash since we have no data
+              lastProcessedDataHash = null;
               // Add delay to prevent race conditions - only show error if still no data after delay
               setTimeout(() => {
                 if (!Wized.data?.r?.XLMtoJSON?.data) {
@@ -266,6 +334,9 @@ function setupWizedIntegration() {
                 pointsCount:
                   newData?.timeSeries?.[0]?.periods?.[0]?.points?.length,
               });
+
+              // Store the hash of processed data
+              lastProcessedDataHash = dataHash;
               updateChartWithWizedData(newData);
             } else if (!isValidChartData(newData)) {
               console.log("Watcher received invalid data structure.");
@@ -274,16 +345,19 @@ function setupWizedIntegration() {
                 keys: newData ? Object.keys(newData) : "N/A",
                 stringify: JSON.stringify(newData).substring(0, 200) + "...",
               });
+              lastProcessedDataHash = null; // Reset hash for invalid data
               handleNoDataForDate();
             } else {
               console.log(
                 "Wized data watcher: Data is valid but unchanged, hiding loading."
               );
+              // Store the hash even for unchanged data to prevent reprocessing
+              lastProcessedDataHash = dataHash;
               // Ensure loading is hidden if data comes back but is the same
               hideLoadingState();
             }
             console.timeEnd("chartDataProcessing");
-          }, 100); // 100ms debounce delay
+          }, 150); // Increased debounce delay to 150ms for better stability
         },
         { deep: true }
       );
@@ -317,6 +391,12 @@ function setupWizedIntegration() {
 
     // Function to execute the data request with retry logic
     function executeDataRequest() {
+      // Prevent multiple simultaneous requests
+      if (activeDataRequest) {
+        console.log("Request already in progress, waiting for completion...");
+        return activeDataRequest;
+      }
+
       requestAttempts++;
       console.log(
         `=== EXECUTING DATA REQUEST (attempt ${requestAttempts}) ===`
@@ -359,7 +439,9 @@ function setupWizedIntegration() {
           maxRetries: maxRetries,
         });
         console.time("apiRequestTime");
-        Wized.requests
+
+        // Store the active request promise
+        activeDataRequest = Wized.requests
           .execute("XLMtoJSON")
           .then(() => {
             console.timeEnd("apiRequestTime");
@@ -372,6 +454,7 @@ function setupWizedIntegration() {
                 : "N/A",
             });
             clearTimeout(loadingTimeout);
+            activeDataRequest = null; // Clear the active request
             // Note: Chart update will be handled by the watcher
           })
           .catch((error: any) => {
@@ -383,6 +466,7 @@ function setupWizedIntegration() {
               type: typeof error,
             });
             clearTimeout(loadingTimeout);
+            activeDataRequest = null; // Clear the active request
 
             if (requestAttempts < maxRetries) {
               console.log(
@@ -396,6 +480,8 @@ function setupWizedIntegration() {
               handleNoDataForDate();
             }
           });
+
+        return activeDataRequest;
       } else {
         console.error("Wized.requests.execute not available!");
         console.error("Wized requests structure:", {
@@ -1195,34 +1281,35 @@ function convertMWhToCentsPerKWh(mwhPrice: number): number {
 
 // Update chart with new data
 function updateChartWithWizedData(data: any) {
-  // Check if data is valid *before* hiding loading, in case we need to show "no data"
-  if (!isValidChartData(data)) {
-    console.error("CRITICAL: Invalid data for chart update");
-    console.error("Data structure:", {
-      hasData: !!data,
-      hasTimeSeries: !!data?.timeSeries,
-      timeSeriesLength: data?.timeSeries?.length,
-      hasPeriods: !!data?.timeSeries?.[0]?.periods,
-      periodsLength: data?.timeSeries?.[0]?.periods?.length,
-      hasPoints: !!data?.timeSeries?.[0]?.periods?.[0]?.points,
-      pointsLength: data?.timeSeries?.[0]?.periods?.[0]?.points?.length,
-    });
-    console.error("Full data object:", data);
-    handleNoDataForDate(); // This will call hideLoadingState
-    return;
-  }
-  // Only hide loading *after* processing valid data
-  hideLoadingState(); // Hide loading indicator now that we have valid data to process
-
-  if (!priceChart) {
-    // Should not happen if initChart worked, but good practice
-    console.error("Price chart instance not available for update.");
-    return;
-  }
-
-  console.log("Updating chart with Wized data...");
   try {
+    // Check if data is valid *before* hiding loading, in case we need to show "no data"
+    if (!isValidChartData(data)) {
+      console.error("CRITICAL: Invalid data for chart update");
+      console.error("Data structure:", {
+        hasData: !!data,
+        hasTimeSeries: !!data?.timeSeries,
+        timeSeriesLength: data?.timeSeries?.length,
+        hasPeriods: !!data?.timeSeries?.[0]?.periods,
+        periodsLength: data?.timeSeries?.[0]?.periods?.length,
+        hasPoints: !!data?.timeSeries?.[0]?.periods?.[0]?.points,
+        pointsLength: data?.timeSeries?.[0]?.periods?.[0]?.points?.length,
+      });
+      console.error("Full data object:", data);
+      handleNoDataForDate(); // This will call hideLoadingState
+      return;
+    }
+    // Only hide loading *after* processing valid data
+    hideLoadingState(); // Hide loading indicator now that we have valid data to process
+
+    if (!priceChart) {
+      // Should not happen if initChart worked, but good practice
+      console.error("Price chart instance not available for update.");
+      return;
+    }
+
+    console.log("Updating chart with Wized data...");
     console.time("chartDataPrep");
+
     const period = data.timeSeries[0].periods[0];
     const points = period.points;
 
@@ -1250,21 +1337,28 @@ function updateChartWithWizedData(data: any) {
 
     // Single pass through data for better performance
     for (let i = 0; i < points.length; i++) {
-      labels[i] = (points[i].position - 1).toString(); // 0-23
-      const price = convertMWhToCentsPerKWh(points[i].price);
-      pricesInCentsPerKWh[i] = price;
+      try {
+        labels[i] = (points[i].position - 1).toString(); // 0-23
+        const price = convertMWhToCentsPerKWh(points[i].price);
+        pricesInCentsPerKWh[i] = price;
 
-      if (!isNaN(price)) {
-        if (price < minPrice) {
-          minPrice = price;
-          minPriceIndex = i;
+        if (!isNaN(price)) {
+          if (price < minPrice) {
+            minPrice = price;
+            minPriceIndex = i;
+          }
+          if (price > maxPrice) {
+            maxPrice = price;
+            maxPriceIndex = i;
+          }
+          totalPrice += price;
+          validPriceCount++;
         }
-        if (price > maxPrice) {
-          maxPrice = price;
-          maxPriceIndex = i;
-        }
-        totalPrice += price;
-        validPriceCount++;
+      } catch (pointError) {
+        console.warn(`Error processing point ${i}:`, pointError);
+        // Continue with other points instead of failing completely
+        labels[i] = i.toString();
+        pricesInCentsPerKWh[i] = 0;
       }
     }
 
@@ -1313,30 +1407,51 @@ function updateChartWithWizedData(data: any) {
 
     // Update chart and stats - this is the expensive operation
     console.time("chartRender");
-    priceChart.data.labels = labels;
-    priceChart.data.datasets[0].data = pricesInCentsPerKWh;
-    priceChart.data.datasets[0].backgroundColor = backgroundColor; // <-- Set bar colors
 
-    // Limit animations for faster rendering
-    priceChart.options.animation = {
-      duration: 200, // Very short animation for quicker rendering
-    };
+    // Safely update chart data
+    try {
+      priceChart.data.labels = labels;
+      priceChart.data.datasets[0].data = pricesInCentsPerKWh;
+      priceChart.data.datasets[0].backgroundColor = backgroundColor; // <-- Set bar colors
 
-    priceChart.update();
-    console.timeEnd("chartRender");
+      // Limit animations for faster rendering
+      priceChart.options.animation = {
+        duration: 200, // Very short animation for quicker rendering
+      };
 
-    // Update stats display after chart is updated (non-blocking)
-    requestAnimationFrame(() => {
-      updatePriceStats(
-        minPrice,
-        maxPrice,
-        avgPrice,
-        minPriceHour,
-        maxPriceHour
-      );
-    });
+      priceChart.update();
+      console.timeEnd("chartRender");
 
-    console.log("Chart updated successfully.");
+      // Update stats display after chart is updated (non-blocking)
+      requestAnimationFrame(() => {
+        try {
+          updatePriceStats(
+            minPrice,
+            maxPrice,
+            avgPrice,
+            minPriceHour,
+            maxPriceHour
+          );
+        } catch (statsError) {
+          console.warn("Error updating price stats:", statsError);
+          // Continue even if stats update fails
+        }
+      });
+
+      console.log("Chart updated successfully.");
+    } catch (chartUpdateError) {
+      console.error("Error during chart.update():", chartUpdateError);
+      // Try to recover by clearing and re-initializing
+      try {
+        priceChart.data.labels = [];
+        priceChart.data.datasets[0].data = [];
+        priceChart.update();
+        console.log("Chart cleared after update error");
+      } catch (clearError) {
+        console.error("Failed to clear chart after error:", clearError);
+      }
+      handleNoDataForDate();
+    }
   } catch (error) {
     console.error("CRITICAL: Error updating chart:", error);
     console.error(
@@ -1349,7 +1464,15 @@ function updateChartWithWizedData(data: any) {
       hasLabels: !!priceChart?.data?.labels,
       hasDatasets: !!priceChart?.data?.datasets?.[0],
     });
-    handleNoDataForDate(); // This will call hideLoadingState
+
+    // Prevent any error from propagating and causing page issues
+    try {
+      handleNoDataForDate(); // This will call hideLoadingState
+    } catch (fallbackError) {
+      console.error("Even fallback error handling failed:", fallbackError);
+      // Last resort: just hide loading
+      hideLoadingState();
+    }
   }
 }
 
