@@ -28,62 +28,6 @@ let isChartInitialized = false;
 let isWizedIntegrationSetup = false;
 let activeDataRequest: Promise<any> | null = null;
 
-// Show loading state UI
-function showLoadingState() {
-  console.log("Showing loading state...");
-  const chartWrapper = document.querySelector(".chart-wrapper");
-  const statsContainer = document.getElementById("priceStats");
-
-  if (chartWrapper) {
-    chartWrapper.classList.add("loading");
-    // Optional: Add a visual overlay or spinner if desired
-    let overlay = chartWrapper.querySelector(".loading-overlay") as HTMLElement; // Cast to HTMLElement
-    if (!overlay) {
-      overlay = document.createElement("div");
-      overlay.className = "loading-overlay";
-      overlay.style.position = "absolute";
-      overlay.style.top = "0";
-      overlay.style.left = "0";
-      overlay.style.right = "0";
-      overlay.style.bottom = "0";
-      overlay.style.backgroundColor = "rgba(255, 255, 255, 0.7)";
-      overlay.style.display = "flex";
-      overlay.style.justifyContent = "center";
-      overlay.style.alignItems = "center";
-      overlay.style.zIndex = "10";
-      overlay.innerHTML = '<div class="loader"></div>'; // Simple spinner div
-      chartWrapper.appendChild(overlay);
-    }
-    overlay.style.display = "flex"; // Now TS knows 'style' exists
-  }
-
-  if (statsContainer) {
-    statsContainer.innerHTML =
-      '<div style="text-align: center; width: 100%; padding: 20px; color: #777;">Daten werden geladen...</div>';
-  }
-
-  document.body.classList.add("chart-loading"); // Add class to body for easier button disabling checks
-  updateNextButtonState(); // Disable navigation buttons
-}
-
-// Hide loading state UI
-function hideLoadingState() {
-  console.log("Hiding loading state...");
-  const chartWrapper = document.querySelector(".chart-wrapper");
-
-  if (chartWrapper) {
-    chartWrapper.classList.remove("loading");
-    const overlay = chartWrapper.querySelector(
-      ".loading-overlay"
-    ) as HTMLElement; // Cast to HTMLElement
-    if (overlay) {
-      overlay.style.display = "none"; // Now TS knows 'style' exists
-    }
-  }
-  document.body.classList.remove("chart-loading"); // Remove body class
-  updateNextButtonState(); // Re-enable navigation buttons if appropriate
-}
-
 // Add Chart.js type to window object
 declare global {
   interface Window {
@@ -1282,37 +1226,19 @@ function isDataUnchanged(newData: any, oldData: any): boolean {
     return !changed; // Return true (unchanged) only if last was also invalid/null
   }
   try {
-    // IMPROVED: Find the correct time series instead of just using the first one
-    const correctTimeSeries = findCorrectTimeSeries(
-      newData,
-      currentSelectedDate
-    );
-    if (!correctTimeSeries) {
-      console.log("No correct time series found, considering data changed");
-      lastProcessedDataSignature = null;
-      return false;
-    }
-
-    const startTime = correctTimeSeries.periods[0].timeInterval.start;
+    const startTime = newData.timeSeries[0].periods[0].timeInterval.start;
     const pointsSignature = JSON.stringify(
-      correctTimeSeries.periods[0].points.map((p: any) => ({
+      newData.timeSeries[0].periods[0].points.map((p: any) => ({
         p: p.position,
         pr: p.price,
       }))
     );
-    // Include the requested date in the signature to prevent wrong-date data
-    const requestedDateStr = currentSelectedDate.toISOString().substring(0, 10);
-    const newSignature = `${requestedDateStr}|${startTime}|${pointsSignature}`;
-
+    const newSignature = `${startTime}|${pointsSignature}`;
     if (newSignature === lastProcessedDataSignature) {
       console.log("Data signature match, data unchanged.");
       return true;
     }
     console.log("Data signature mismatch, data changed.");
-    console.log(
-      "New signature preview:",
-      newSignature.substring(0, 100) + "..."
-    );
     lastProcessedDataSignature = newSignature;
     return false;
   } catch (error) {
@@ -1372,28 +1298,6 @@ function updateChartWithWizedData(data: any) {
       handleNoDataForDate(); // This will call hideLoadingState
       return;
     }
-
-    // CRITICAL FIX: Find the correct time series that matches our requested date
-    const correctTimeSeries = findCorrectTimeSeries(data, currentSelectedDate);
-    if (!correctTimeSeries) {
-      console.error("CRITICAL: No time series found for the requested date");
-      console.error("Requested date:", currentSelectedDate.toISOString());
-      console.error(
-        "Available time series:",
-        data.timeSeries?.map((ts: any) => ({
-          startTime: ts.periods?.[0]?.timeInterval?.start,
-          pointsCount: ts.periods?.[0]?.points?.length,
-        }))
-      );
-      handleNoDataForDate();
-      return;
-    }
-
-    console.log("Using correct time series:", {
-      startTime: correctTimeSeries.periods[0].timeInterval.start,
-      pointsCount: correctTimeSeries.periods[0].points.length,
-    });
-
     // Only hide loading *after* processing valid data
     hideLoadingState(); // Hide loading indicator now that we have valid data to process
 
@@ -1406,7 +1310,7 @@ function updateChartWithWizedData(data: any) {
     console.log("Updating chart with Wized data...");
     console.time("chartDataPrep");
 
-    const period = correctTimeSeries.periods[0];
+    const period = data.timeSeries[0].periods[0];
     const points = period.points;
 
     // Ensure points is an array and has length
@@ -1572,104 +1476,6 @@ function updateChartWithWizedData(data: any) {
   }
 }
 
-// NEW FUNCTION: Find the correct time series that matches our requested date
-function findCorrectTimeSeries(data: any, requestedDate: Date): any | null {
-  if (!data.timeSeries || !Array.isArray(data.timeSeries)) {
-    console.error("No time series array found in data");
-    return null;
-  }
-
-  console.log(
-    `Looking for time series matching date: ${requestedDate.toISOString()}`
-  );
-
-  // Convert requested date to the expected start time format
-  // Energy data typically starts at 22:00 UTC the day before (for German time zone)
-  const expectedStartDate = new Date(requestedDate);
-  expectedStartDate.setUTCDate(requestedDate.getUTCDate() - 1);
-  expectedStartDate.setUTCHours(22, 0, 0, 0);
-
-  const requestedDateStr = requestedDate.toISOString().substring(0, 10); // YYYY-MM-DD
-  const expectedStartStr = expectedStartDate.toISOString().substring(0, 10); // YYYY-MM-DD
-
-  console.log("Expected start date patterns:", {
-    requestedDate: requestedDateStr,
-    expectedStartDate: expectedStartStr,
-    expectedStartFull: expectedStartDate.toISOString(),
-  });
-
-  // Find time series that match our date criteria
-  const candidates = [];
-
-  for (let i = 0; i < data.timeSeries.length; i++) {
-    const timeSeries = data.timeSeries[i];
-    const period = timeSeries.periods?.[0];
-    const startTime = period?.timeInterval?.start;
-
-    if (!startTime) {
-      console.log(`Time series ${i}: No start time found`);
-      continue;
-    }
-
-    // Parse the start time
-    const startDate = new Date(startTime);
-    const startDateStr = startDate.toISOString().substring(0, 10);
-
-    console.log(
-      `Time series ${i}: Start time ${startTime} (${startDateStr}), Points: ${period.points?.length}`
-    );
-
-    // Check if this time series matches our expected date
-    // Energy data can start at 22:00 the day before or 00:00 the same day
-    const isMatchingStart = startDateStr === expectedStartStr; // 22:00 day before
-    const isMatchingSameDay = startDateStr === requestedDateStr; // 00:00 same day
-
-    if (isMatchingStart || isMatchingSameDay) {
-      candidates.push({
-        index: i,
-        timeSeries: timeSeries,
-        startTime: startTime,
-        startDate: startDate,
-        pointsCount: period.points?.length || 0,
-        priority: isMatchingStart ? 1 : 2, // Prefer 22:00 start (more common for energy data)
-      });
-    }
-  }
-
-  console.log(
-    "Found candidates:",
-    candidates.map((c) => ({
-      index: c.index,
-      startTime: c.startTime,
-      pointsCount: c.pointsCount,
-      priority: c.priority,
-    }))
-  );
-
-  if (candidates.length === 0) {
-    console.error("No matching time series found for the requested date");
-    return null;
-  }
-
-  // Sort by priority (prefer 22:00 start) and then by points count (prefer 24 points)
-  candidates.sort((a, b) => {
-    if (a.priority !== b.priority) {
-      return a.priority - b.priority;
-    }
-    // If same priority, prefer the one with 24 points (full day)
-    return Math.abs(b.pointsCount - 24) - Math.abs(a.pointsCount - 24);
-  });
-
-  const selected = candidates[0];
-  console.log("Selected time series:", {
-    index: selected.index,
-    startTime: selected.startTime,
-    pointsCount: selected.pointsCount,
-  });
-
-  return selected.timeSeries;
-}
-
 // Handle cases where no data is available for the selected date OR request fails
 function handleNoDataForDate() {
   console.error(
@@ -1700,6 +1506,62 @@ function handleNoDataForDate() {
   }
   clearPriceStats(); // Show appropriate message in stats area
   hideLoadingState(); // Ensure loading indicator is hidden
+}
+
+// Show loading state UI
+function showLoadingState() {
+  console.log("Showing loading state...");
+  const chartWrapper = document.querySelector(".chart-wrapper");
+  const statsContainer = document.getElementById("priceStats");
+
+  if (chartWrapper) {
+    chartWrapper.classList.add("loading");
+    // Optional: Add a visual overlay or spinner if desired
+    let overlay = chartWrapper.querySelector(".loading-overlay") as HTMLElement; // Cast to HTMLElement
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = "loading-overlay";
+      overlay.style.position = "absolute";
+      overlay.style.top = "0";
+      overlay.style.left = "0";
+      overlay.style.right = "0";
+      overlay.style.bottom = "0";
+      overlay.style.backgroundColor = "rgba(255, 255, 255, 0.7)";
+      overlay.style.display = "flex";
+      overlay.style.justifyContent = "center";
+      overlay.style.alignItems = "center";
+      overlay.style.zIndex = "10";
+      overlay.innerHTML = '<div class="loader"></div>'; // Simple spinner div
+      chartWrapper.appendChild(overlay);
+    }
+    overlay.style.display = "flex"; // Now TS knows 'style' exists
+  }
+
+  if (statsContainer) {
+    statsContainer.innerHTML =
+      '<div style="text-align: center; width: 100%; padding: 20px; color: #777;">Daten werden geladen...</div>';
+  }
+
+  document.body.classList.add("chart-loading"); // Add class to body for easier button disabling checks
+  updateNextButtonState(); // Disable navigation buttons
+}
+
+// Hide loading state UI
+function hideLoadingState() {
+  console.log("Hiding loading state...");
+  const chartWrapper = document.querySelector(".chart-wrapper");
+
+  if (chartWrapper) {
+    chartWrapper.classList.remove("loading");
+    const overlay = chartWrapper.querySelector(
+      ".loading-overlay"
+    ) as HTMLElement; // Cast to HTMLElement
+    if (overlay) {
+      overlay.style.display = "none"; // Now TS knows 'style' exists
+    }
+  }
+  document.body.classList.remove("chart-loading"); // Remove body class
+  updateNextButtonState(); // Re-enable navigation buttons if appropriate
 }
 
 // Inject CSS styles
