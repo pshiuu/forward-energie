@@ -80,9 +80,6 @@ function enableScroll() {
 
   // Reset the body position
   document.body.style.top = "";
-
-  // Restore scroll position
-  window.scrollTo({ top: scrollPosition });
 }
 
 /**
