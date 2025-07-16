@@ -63,10 +63,6 @@ function disableScroll() {
 
   // Add no-scroll class to body
   document.body.classList.add("no-scroll");
-
-  // Set the body's top position to the negative of the current scroll position
-  // This prevents the visual "jump" when disabling scroll
-  document.body.style.top = `-${scrollPosition}px`;
 }
 
 /**
