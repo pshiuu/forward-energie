@@ -84,23 +84,76 @@ export function initEnergyPriceChart() {
     injectStyles();
     setupDateNavigation(); // Setup UI first
 
-    if (window.Wized) {
-      setupWizedIntegration();
-    } else {
-      initChart();
-      updateDateDisplay(currentSelectedDate);
-      handleNoDataForDate(); // Show no data message
-    }
+    // Always initialize the chart structure immediately for better UX
+    initChart();
+    updateDateDisplay(currentSelectedDate);
+
+    // Instead of immediately showing "no data", wait for Wized or set up polling
+    waitForWizedAndSetup();
   });
+}
+
+// New function to properly wait for Wized
+function waitForWizedAndSetup() {
+  // If Wized is already available, use it immediately
+  if (window.Wized) {
+    console.log("Wized found immediately, setting up integration");
+    setupWizedIntegration();
+    return;
+  }
+
+  // If not available, set up polling with timeout
+  console.log("Wized not found, setting up polling...");
+  showLoadingState(); // Show loading while we wait
+
+  let attempts = 0;
+  const maxAttempts = 50; // 10 seconds (200ms * 50)
+  const pollInterval = 200; // Check every 200ms
+
+  const pollForWized = () => {
+    attempts++;
+
+    if (window.Wized) {
+      console.log(
+        `Wized found after ${attempts} attempts (${attempts * pollInterval}ms)`
+      );
+      setupWizedIntegration();
+      return;
+    }
+
+    if (attempts >= maxAttempts) {
+      console.warn("Wized not found after 10 seconds, showing fallback");
+      hideLoadingState();
+      handleNoDataForDate();
+      return;
+    }
+
+    // Continue polling
+    setTimeout(pollForWized, pollInterval);
+  };
+
+  // Start polling
+  setTimeout(pollForWized, pollInterval);
 }
 
 // Setup Wized Integration
 function setupWizedIntegration() {
   window.Wized = window.Wized || [];
   window.Wized.push((Wized: any) => {
+    console.log("=== WIZED INTEGRATION STARTING ===");
+    console.log("Wized object structure:", {
+      hasData: !!Wized?.data,
+      hasRequests: !!Wized?.requests,
+      hasReactivity: !!Wized?.reactivity,
+      dataKeys: Wized?.data ? Object.keys(Wized.data) : [],
+    });
+
     // Initialize chart structure and basic UI first - do this immediately for perceived performance
     console.time("chartInitialization");
-    initChart();
+    // Chart is already initialized in waitForWizedAndSetup, so skip if exists
+    if (!priceChart) {
+      initChart();
+    }
     console.timeEnd("chartInitialization");
 
     // Log timezone information for debugging
@@ -158,10 +211,20 @@ function setupWizedIntegration() {
 
     // CRITICAL FIX: Setup the watcher FIRST, before making any requests
     if (Wized.reactivity && Wized.reactivity.watch) {
+      console.log("Setting up Wized data watcher...");
       Wized.reactivity.watch(
         () => Wized.data?.r?.XLMtoJSON?.data,
         (newData: any, oldData: any) => {
-          console.log("Wized data watcher triggered.");
+          console.log("=== WIZED DATA WATCHER TRIGGERED ===");
+          console.log("New data exists:", !!newData);
+          console.log("Old data exists:", !!oldData);
+          console.log("Data path check:", {
+            hasWizedData: !!Wized.data,
+            hasR: !!Wized.data?.r,
+            hasXLMtoJSON: !!Wized.data?.r?.XLMtoJSON,
+            hasData: !!Wized.data?.r?.XLMtoJSON?.data,
+          });
+
           clearTimeout(loadingTimeout); // Clear timeout when watcher triggers
 
           if (!newData) {
@@ -185,9 +248,21 @@ function setupWizedIntegration() {
             console.log(
               "Watcher received valid & changed data, updating chart."
             );
+            console.log("Data structure preview:", {
+              timeSeriesCount: newData?.timeSeries?.length,
+              firstPeriodStart:
+                newData?.timeSeries?.[0]?.periods?.[0]?.timeInterval?.start,
+              pointsCount:
+                newData?.timeSeries?.[0]?.periods?.[0]?.points?.length,
+            });
             updateChartWithWizedData(newData);
           } else if (!isValidChartData(newData)) {
             console.log("Watcher received invalid data structure.");
+            console.log("Invalid data details:", {
+              type: typeof newData,
+              keys: newData ? Object.keys(newData) : "N/A",
+              stringify: JSON.stringify(newData).substring(0, 200) + "...",
+            });
             handleNoDataForDate();
           } else {
             console.log(
@@ -231,13 +306,16 @@ function setupWizedIntegration() {
     // Function to execute the data request with retry logic
     function executeDataRequest() {
       requestAttempts++;
-      console.log(`Executing data request (attempt ${requestAttempts})`);
+      console.log(
+        `=== EXECUTING DATA REQUEST (attempt ${requestAttempts}) ===`
+      );
 
       // Clear any existing timeout
       clearTimeout(loadingTimeout);
       setLoadingTimeout();
 
       // Update Wized variables for this attempt
+      console.log("Updating Wized variables before request...");
       const variablesUpdated = updateWizedVariables(
         initialPeriodStart,
         initialPeriodEnd,
@@ -259,18 +337,39 @@ function setupWizedIntegration() {
       // Execute the API request
       if (Wized.requests?.execute) {
         console.log("Executing XLMtoJSON request for today's data.");
+        console.log("Request details:", {
+          requestName: "XLMtoJSON",
+          currentVariables: {
+            periodeStart: Wized?.data?.v?.periodeStart,
+            periodeEnd: Wized?.data?.v?.periodeEnd,
+          },
+          attempt: requestAttempts,
+          maxRetries: maxRetries,
+        });
         console.time("apiRequestTime");
         Wized.requests
           .execute("XLMtoJSON")
           .then(() => {
             console.timeEnd("apiRequestTime");
             console.log("XLMtoJSON request completed successfully");
+            console.log("Response data check:", {
+              hasResponse: !!Wized.data?.r?.XLMtoJSON,
+              hasData: !!Wized.data?.r?.XLMtoJSON?.data,
+              responseKeys: Wized.data?.r?.XLMtoJSON
+                ? Object.keys(Wized.data.r.XLMtoJSON)
+                : "N/A",
+            });
             clearTimeout(loadingTimeout);
             // Note: Chart update will be handled by the watcher
           })
           .catch((error: any) => {
             console.timeEnd("apiRequestTime");
             console.error("Error executing XLMtoJSON request:", error);
+            console.error("Error details:", {
+              message: error.message,
+              stack: error.stack,
+              type: typeof error,
+            });
             clearTimeout(loadingTimeout);
 
             if (requestAttempts < maxRetries) {
@@ -287,6 +386,11 @@ function setupWizedIntegration() {
           });
       } else {
         console.error("Wized.requests.execute not available!");
+        console.error("Wized requests structure:", {
+          hasRequests: !!Wized.requests,
+          requestsType: typeof Wized.requests,
+          requestsKeys: Wized.requests ? Object.keys(Wized.requests) : "N/A",
+        });
         if (requestAttempts < maxRetries) {
           setTimeout(() => executeDataRequest(), 1000); // Retry after 1 second
         } else {
@@ -298,7 +402,12 @@ function setupWizedIntegration() {
     }
 
     // 3. Check if data already exists before making a request
+    console.log("Checking for existing data...");
     const existingData = Wized.data?.r?.XLMtoJSON?.data;
+    console.log("Existing data check:", {
+      hasExistingData: !!existingData,
+      isValid: existingData ? isValidChartData(existingData) : false,
+    });
     if (existingData && isValidChartData(existingData)) {
       console.log("Found existing valid data, using it instead of new request");
       updateChartWithWizedData(existingData);
@@ -306,6 +415,7 @@ function setupWizedIntegration() {
     }
 
     // 4. Start the initial data request with retry capability
+    console.log("No existing valid data found, starting initial request...");
     executeDataRequest();
   });
 }
@@ -825,7 +935,8 @@ function updateWizedVariables(
   endValue: string,
   Wized: any
 ): boolean {
-  // Accept Wized object
+  console.log("=== UPDATING WIZED VARIABLES ===");
+  console.log("Parameters:", { startValue, endValue });
 
   // Log Wized object structure for debugging
   console.log("Wized object in updateWizedVariables:", {
@@ -839,12 +950,17 @@ function updateWizedVariables(
 
   // Direct fallback approach - try to set variables directly if API isn't available
   const useDirectSet = !Wized?.data?.variables?.set;
+  console.log("Using direct variable assignment:", useDirectSet);
 
   // Get current values for comparison
   const currentStart = Wized?.data?.v?.periodeStart;
   const currentEnd = Wized?.data?.v?.periodeEnd;
+  console.log("Current variable values:", { currentStart, currentEnd });
 
   const signature = `${startValue}|${endValue}`;
+  console.log("New signature:", signature);
+  console.log("Last signature:", lastWizedUpdateSignature);
+
   // Only prevent update if signature AND current Wized values match
   if (
     currentStart === startValue &&
@@ -867,8 +983,16 @@ function updateWizedVariables(
       // FALLBACK: Direct assignment if variables API not available
       console.log("Using direct variable assignment as fallback");
       if (Wized?.data?.v) {
+        console.log("Before update:", {
+          periodeStart: Wized.data.v.periodeStart,
+          periodeEnd: Wized.data.v.periodeEnd,
+        });
         Wized.data.v.periodeStart = startValue;
         Wized.data.v.periodeEnd = endValue;
+        console.log("After update:", {
+          periodeStart: Wized.data.v.periodeStart,
+          periodeEnd: Wized.data.v.periodeEnd,
+        });
         console.log("Direct variable assignment complete");
         return true;
       } else {
@@ -879,21 +1003,43 @@ function updateWizedVariables(
       }
     } else {
       // Use the passed Wized object's variable API
+      console.log("Using Wized variables API");
       const wizedVariables = Wized.data.variables;
+      console.log("Variables API structure:", {
+        hasBatch: !!wizedVariables.batch,
+        hasSet: !!wizedVariables.set,
+        type: typeof wizedVariables,
+      });
+
       if (wizedVariables.batch) {
+        console.log("Using batch variable update");
         wizedVariables.batch(() => {
           wizedVariables.set("periodeStart", startValue);
           wizedVariables.set("periodeEnd", endValue);
         });
       } else {
+        console.log("Using individual variable updates");
         wizedVariables.set("periodeStart", startValue);
         wizedVariables.set("periodeEnd", endValue);
       }
       console.log("Wized variables updated via API");
+      console.log("Variables after API update:", {
+        periodeStart: Wized?.data?.v?.periodeStart,
+        periodeEnd: Wized?.data?.v?.periodeEnd,
+      });
       return true; // Indicate update was triggered
     }
   } catch (error) {
     console.error("Error updating Wized variables:", error);
+    console.error("Error details:", {
+      message: error.message,
+      stack: error.stack,
+      wizedStructure: {
+        hasData: !!Wized?.data,
+        hasVariables: !!Wized?.data?.variables,
+        hasV: !!Wized?.data?.v,
+      },
+    });
 
     // Last-resort fallback: try direct assignment even if API was preferred
     if (!useDirectSet && Wized?.data?.v) {
@@ -919,8 +1065,90 @@ function updateWizedVariables(
 // Check if data is valid
 function isValidChartData(data: any): boolean {
   try {
-    // More resilient validation - check the essential path exists
-    return !!(data?.timeSeries?.[0]?.periods?.[0]?.points?.length > 0);
+    console.log("=== VALIDATING CHART DATA ===");
+    console.log("Data type:", typeof data);
+    console.log("Data exists:", !!data);
+
+    if (!data) {
+      console.log("Validation failed: Data is null/undefined");
+      return false;
+    }
+
+    console.log("Data keys:", Object.keys(data));
+    console.log("Has timeSeries:", !!data.timeSeries);
+    console.log("TimeSeries type:", typeof data.timeSeries);
+    console.log(
+      "TimeSeries length:",
+      data.timeSeries ? data.timeSeries.length : "N/A"
+    );
+
+    if (
+      !data.timeSeries ||
+      !Array.isArray(data.timeSeries) ||
+      data.timeSeries.length === 0
+    ) {
+      console.log("Validation failed: No timeSeries array or empty");
+      return false;
+    }
+
+    const firstTimeSeries = data.timeSeries[0];
+    console.log("First timeSeries keys:", Object.keys(firstTimeSeries));
+    console.log("Has periods:", !!firstTimeSeries.periods);
+    console.log("Periods type:", typeof firstTimeSeries.periods);
+    console.log(
+      "Periods length:",
+      firstTimeSeries.periods ? firstTimeSeries.periods.length : "N/A"
+    );
+
+    if (
+      !firstTimeSeries.periods ||
+      !Array.isArray(firstTimeSeries.periods) ||
+      firstTimeSeries.periods.length === 0
+    ) {
+      console.log("Validation failed: No periods array or empty");
+      return false;
+    }
+
+    const firstPeriod = firstTimeSeries.periods[0];
+    console.log("First period keys:", Object.keys(firstPeriod));
+    console.log("Has points:", !!firstPeriod.points);
+    console.log("Points type:", typeof firstPeriod.points);
+    console.log(
+      "Points length:",
+      firstPeriod.points ? firstPeriod.points.length : "N/A"
+    );
+
+    if (
+      !firstPeriod.points ||
+      !Array.isArray(firstPeriod.points) ||
+      firstPeriod.points.length === 0
+    ) {
+      console.log("Validation failed: No points array or empty");
+      return false;
+    }
+
+    // Sample first few points for validation
+    const samplePoints = firstPeriod.points.slice(0, 3);
+    console.log("Sample points:", samplePoints);
+
+    // Validate point structure
+    for (let i = 0; i < Math.min(3, firstPeriod.points.length); i++) {
+      const point = firstPeriod.points[i];
+      if (
+        !point ||
+        typeof point.position !== "number" ||
+        typeof point.price !== "number"
+      ) {
+        console.log(
+          `Validation failed: Invalid point structure at index ${i}:`,
+          point
+        );
+        return false;
+      }
+    }
+
+    console.log("Validation successful: Data structure is valid");
+    return true;
   } catch (error) {
     console.warn("Data validation error:", error, data);
     return false;
