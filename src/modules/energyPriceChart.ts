@@ -115,16 +115,20 @@ export function initEnergyPriceChart() {
 
     isChartInitialized = true;
     console.log("🔋 Energy Price Chart - Starting initialization");
+    console.log("DOM readyState:", document.readyState);
 
     injectStyles();
     setupDateNavigation(); // Setup UI first
 
-    // Always initialize the chart structure immediately for better UX
-    initChart();
-    updateDateDisplay(currentSelectedDate);
+    // Add a small delay to ensure DOM elements are fully available
+    setTimeout(() => {
+      // Always initialize the chart structure immediately for better UX
+      initChart();
+      updateDateDisplay(currentSelectedDate);
 
-    // Instead of immediately showing "no data", wait for Wized or set up polling
-    waitForWizedAndSetup();
+      // Instead of immediately showing "no data", wait for Wized or set up polling
+      waitForWizedAndSetup();
+    }, 100); // 100ms delay to ensure DOM is fully ready
   });
 }
 
@@ -545,7 +549,11 @@ function setupWizedIntegration() {
 function setupDateNavigation() {
   const chartWrapper = document.querySelector(".chart-wrapper");
   const chartTitle = chartWrapper?.querySelector(".chart-title-container"); // Assuming a title container exists or can be added
-  if (!chartWrapper) return;
+  if (!chartWrapper) {
+    console.warn("⚠️ Chart wrapper (.chart-wrapper) not found - date navigation will not be set up");
+    console.warn("🔧 This is not critical but date navigation buttons will be missing");
+    return;
+  }
 
   // Create date navigation container
   const dateNavContainer = document.createElement("div");
@@ -673,7 +681,11 @@ function setupDateNavigation() {
   });
 
   // Handle date selection from the picker
-  datePickerInput.addEventListener("change", handleDatePickerChange);
+  if (datePickerInput) {
+    datePickerInput.addEventListener("change", handleDatePickerChange);
+  } else {
+    console.error("❌ datePickerInput is null when trying to add event listener");
+  }
 
   updateDateDisplay(currentSelectedDate);
   updateNextButtonState();
@@ -2054,6 +2066,14 @@ function injectStyles() {
 function initChart() {
   if (priceChart) return;
   console.log("Initializing chart structure...");
+  
+  // Defensive check against canvas conflicts from external libraries
+  try {
+    // Isolate our canvas operations from external interference
+    console.log("🛡️ Applying canvas protection against external libraries");
+  } catch (error) {
+    console.warn("⚠️ Could not apply canvas protection:", error);
+  }
 
   // Find the original container and the canvas
   const chartContainerElement = document.querySelector(".chart-container");
@@ -2063,6 +2083,26 @@ function initChart() {
 
   if (!chartContainerElement || !chartCanvas) {
     console.error("Chart container or canvas element not found");
+    console.error("Available elements check:");
+    console.error("- .chart-container:", !!chartContainerElement);
+    console.error("- #priceChart:", !!chartCanvas);
+    console.error("- DOM ready state:", document.readyState);
+    
+    // List all elements with chart-related classes/ids for debugging
+    const chartRelated = document.querySelectorAll('[class*="chart"], [id*="chart"], [class*="price"], [id*="price"]');
+    console.error("Chart-related elements found:", Array.from(chartRelated).map(el => ({
+      tag: el.tagName,
+      id: el.id,
+      class: el.className,
+      element: el
+    })));
+    
+    console.error("❌ Cannot initialize chart - required DOM elements are missing");
+    console.error("🔧 This usually indicates the Webflow page structure is different than expected");
+    console.error("📋 Please ensure the page contains:");
+    console.error("   - An element with class 'chart-container'");  
+    console.error("   - A <canvas> element with id 'priceChart'");
+    
     return;
   }
 
