@@ -220,11 +220,13 @@ function setupWizedIntegration() {
     updateDateDisplay(currentSelectedDate); // Displays today in German time
     updateNextButtonState();
 
-    console.log("Forcing initial load for the current day (German time).");
+    console.log("=== FORCING INITIAL LOAD FOR CURRENT DAY (GERMAN TIME) ===");
 
     // 1. Calculate today's date range in German time
     const today = getGermanToday();
     console.log("German today (midnight):", today.toISOString());
+    console.log("Browser local time:", new Date().toString());
+    console.log("Browser local ISO:", new Date().toISOString());
 
     // Start date is today at 00:00 German time (should already be this way)
     const initialStartDate = new Date(today);
@@ -306,18 +308,26 @@ function setupWizedIntegration() {
             clearTimeout(loadingTimeout); // Clear timeout when watcher triggers
 
             if (!newData) {
-              console.log(
-                "Watcher received null/undefined data, waiting before showing error..."
+              console.warn(
+                "⚠️ Watcher received null/undefined data, waiting before showing error..."
               );
+              console.warn("Response structure:", {
+                hasWized: !!Wized,
+                hasData: !!Wized?.data,
+                hasR: !!Wized?.data?.r,
+                hasXLMtoJSON: !!Wized?.data?.r?.XLMtoJSON,
+                XLMtoJSON: Wized?.data?.r?.XLMtoJSON,
+              });
               // Reset hash since we have no data
               lastProcessedDataHash = null;
               // Add delay to prevent race conditions - only show error if still no data after delay
               setTimeout(() => {
                 if (!Wized.data?.r?.XLMtoJSON?.data) {
-                  console.log("Still no data after delay, showing error");
+                  console.error("❌ Still no data after delay, showing error");
+                  console.error("Final response check:", Wized?.data?.r?.XLMtoJSON);
                   handleNoDataForDate();
                 } else {
-                  console.log("Data appeared after delay, continuing");
+                  console.log("✅ Data appeared after delay, continuing");
                 }
               }, 2000); // Wait 2 seconds
               return;
@@ -441,8 +451,8 @@ function setupWizedIntegration() {
 
       // Execute the API request
       if (Wized.requests?.execute) {
-        console.log("Executing XLMtoJSON request for today's data.");
-        console.log("Request details:", {
+        console.log("🚀 Executing XLMtoJSON request for today's data.");
+        console.log("📋 Request details:", {
           requestName: "XLMtoJSON",
           currentVariables: {
             periodeStart: Wized?.data?.v?.periodeStart,
@@ -450,6 +460,12 @@ function setupWizedIntegration() {
           },
           attempt: requestAttempts,
           maxRetries: maxRetries,
+        });
+        console.log("🕐 Requesting data for date range:", {
+          start: initialPeriodStart,
+          end: initialPeriodEnd,
+          startISO: initialStartDate.toISOString(),
+          endISO: initialEndDate.toISOString()
         });
         console.time("apiRequestTime");
 
@@ -1387,6 +1403,65 @@ function convertMWhToCentsPerKWh(mwhPrice: number): number {
   return isNaN(price) ? 0 : price / 10;
 }
 
+// Aggregate 15-minute interval data into hourly averages
+// ENTSO-E API changed in October 2024 from hourly to 15-minute intervals
+function aggregateToHourlyData(points: any[]): any[] {
+  console.log(`📊 Aggregation check: Received ${points.length} data points`);
+
+  // If we have 24 or fewer points, assume it's already hourly data
+  if (points.length <= 24) {
+    console.log("✅ Data appears to be hourly already (≤24 points), no aggregation needed");
+    console.log("Sample point structure:", points[0]);
+    return points;
+  }
+
+  // If we have around 96 points (24 hours * 4), aggregate to hourly
+  console.log(`🔄 Aggregating ${points.length} 15-minute interval points to hourly data`);
+  console.log("Sample 15-min point:", points[0]);
+
+  const hourlyPoints: any[] = [];
+  const pointsPerHour = 4; // 15-minute intervals
+
+  for (let hour = 0; hour < 24; hour++) {
+    // Get the 4 points for this hour
+    const startIdx = hour * pointsPerHour;
+    const endIdx = Math.min(startIdx + pointsPerHour, points.length);
+    const hourPoints = points.slice(startIdx, endIdx);
+
+    if (hourPoints.length === 0) {
+      console.warn(`No data points found for hour ${hour}`);
+      continue;
+    }
+
+    // Calculate average price for this hour
+    const validPrices = hourPoints
+      .map(p => Number(p.price))
+      .filter(p => !isNaN(p) && isFinite(p));
+
+    if (validPrices.length === 0) {
+      console.warn(`No valid prices for hour ${hour}`);
+      continue;
+    }
+
+    const avgPrice = validPrices.reduce((sum, p) => sum + p, 0) / validPrices.length;
+
+    // Create aggregated hourly point
+    // IMPORTANT: position MUST be hour + 1 (1-24) for correct time display
+    hourlyPoints.push({
+      position: hour + 1, // Position 1-24 for hours 0-23
+      price: avgPrice
+    });
+
+    // Log first few aggregations for debugging
+    if (hour < 3) {
+      console.log(`Hour ${hour} (position ${hour + 1}): Aggregated ${hourPoints.length} points, avg price: ${avgPrice.toFixed(2)}`);
+    }
+  }
+
+  console.log(`Aggregation complete: ${hourlyPoints.length} hourly points created`);
+  return hourlyPoints;
+}
+
 // Update chart with new data
 function updateChartWithWizedData(data: any) {
   try {
@@ -1419,7 +1494,7 @@ function updateChartWithWizedData(data: any) {
     console.time("chartDataPrep");
 
     const period = data.timeSeries[0].periods[0];
-    const points = period.points;
+    let points = period.points;
 
     // Ensure points is an array and has length
     if (!Array.isArray(points) || points.length === 0) {
@@ -1430,6 +1505,11 @@ function updateChartWithWizedData(data: any) {
       handleNoDataForDate(); // This will call hideLoadingState (redundant, but safe)
       return;
     }
+
+    // Aggregate 15-minute data to hourly if needed (API changed in October 2024)
+    console.log(`Raw data points received: ${points.length}`);
+    points = aggregateToHourlyData(points);
+    console.log(`Points after aggregation: ${points.length}`);
 
     // Pre-allocate arrays for performance
     const labels = new Array(points.length);
@@ -1510,6 +1590,21 @@ function updateChartWithWizedData(data: any) {
       maxPriceIndex !== -1
         ? formatTimeFromPosition(points[maxPriceIndex].position)
         : "N/A";
+
+    // Log price statistics for verification
+    console.log("Price Statistics:", {
+      minPrice: minPrice.toFixed(2),
+      minPriceHour,
+      minPricePosition: points[minPriceIndex]?.position,
+      maxPrice: maxPrice.toFixed(2),
+      maxPriceHour,
+      maxPricePosition: points[maxPriceIndex]?.position,
+      avgPrice: avgPrice.toFixed(2)
+    });
+
+    // Verify first few hour labels are correct
+    console.log("First 3 hour labels:", labels.slice(0, 3), "from positions:", points.slice(0, 3).map((p: any) => p.position));
+    console.log("Last 3 hour labels:", labels.slice(-3), "from positions:", points.slice(-3).map((p: any) => p.position));
 
     console.timeEnd("chartDataPrep");
 
